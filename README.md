@@ -1,10 +1,11 @@
 <table width="100%">
   <tr>
     <td align="left" valign="middle">
-      <h1>FreeCloud</h1>
+      <img src="https://kylebenzle.com/FreeCloud/logo_small.png" width="120">
+      
     </td>
     <td align="right" valign="middle">
-      <img src="https://kylebenzle.com/FreeCloud/logo_small.png" width="120">
+      <h1>FreeCloud</h1>
     </td>
   </tr>
 </table>
