@@ -11,7 +11,7 @@
 
 ## Stop paying twice for storage!!!
 
-If you already have disk space on your web host FreeCloud lets you use it.
+If you already have disk space on your web host FreeCloud lets you use it as a "cloud drive" with local sync.
 
 If you pay for:
 - web hosting  
