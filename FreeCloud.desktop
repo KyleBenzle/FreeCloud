@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=FreeCloud Sync
+Comment=Run the FreeCloud sync client
+Exec=sh -c 'cd "$(dirname "$0")" && ./Run_Mac_Linux.sh' %k
+Terminal=true
+Categories=Utility;Network;
