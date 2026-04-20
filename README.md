@@ -1,6 +1,6 @@
 # FreeCloud
 
-## Stop Paying Twice!!!
+## Stop Paying Twice For Cloud Storage!!!
 
 If you pay for:
 - web hosting  
