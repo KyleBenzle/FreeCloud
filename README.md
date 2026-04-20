@@ -1,8 +1,6 @@
 # FreeCloud
 
-![Setup](https://kylebenzle.com/FreeCloud/Setup0.png)
-
-## Stop Paying Twice
+## Stop Paying Twice!!!
 
 If you pay for:
 - web hosting  
@@ -20,6 +18,11 @@ FreeCloud just lets you use it.
 ## How to Set Up
 
 ### 1. Upload the server files
+
+
+![Setup](https://kylebenzle.com/FreeCloud/Setup0.png)
+
+
 
 Upload everything inside the `server/` folder to your web host.
 
