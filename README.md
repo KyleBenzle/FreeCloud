@@ -1,24 +1,31 @@
-# FreeCloud
+<table width="100%">
+  <tr>
+    <td align="left" valign="middle">
+      <h1>FreeCloud</h1>
+    </td>
+    <td align="right" valign="middle">
+      <img src="https://kylebenzle.com/FreeCloud/logo_small.png" width="120">
+    </td>
+  </tr>
+</table>
 
-## Stop Paying Twice For Cloud Storage!!!
+
+## Stop paying twice for storage!!!
+
+If you already have disk space on your web host FreeCloud lets you use it.
 
 If you pay for:
 - web hosting  
 - cloud storage (Dropbox, Google Drive, etc)  
 - maybe email storage  
 
-then you are getting double or even triple charged for the same thing.
-
-You already have disk space on your web host.
-
-FreeCloud just lets you use it.
+then you are getting double or even triple charged for the same thing. 
 
 ---
 
 ## How to Set Up
 
 ### 1. Upload the server files
-
 
 ![Setup](https://kylebenzle.com/FreeCloud/Setup0.png)
 
