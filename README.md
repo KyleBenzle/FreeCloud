@@ -1,11 +1,9 @@
+```markdown
 # FreeCloud
-
-If you already have disk space with a web host FreeCloud lets you use it!
-
-## Why are we ALL paying Twice?!?
 
 ![Setup](https://kylebenzle.com/FreeCloud/Setup0.png)
 
+## Stop Paying Twice
 
 If you pay for:
 - web hosting  
@@ -14,7 +12,9 @@ If you pay for:
 
 then you are getting double or even triple charged for the same thing.
 
+You already have disk space on your web host.
 
+FreeCloud just lets you use it.
 
 ---
 
@@ -25,3 +25,130 @@ then you are getting double or even triple charged for the same thing.
 Upload everything inside the `server/` folder to your web host.
 
 Create a folder like this:
+```
+
+public_html/FreeCloud/
+
+```
+
+So on your host:
+- go to `public_html`
+- create a folder called `FreeCloud`
+- upload all the server files into it
+
+Then go to:
+```
+
+[https://yourdomain.com/FreeCloud](https://yourdomain.com/FreeCloud)
+
+```
+
+---
+
+### 2. Run the local sync program
+
+![Setup](https://kylebenzle.com/FreeCloud/Setup1.png)
+
+Run:
+
+Mac / Linux:
+```
+
+./Run_Mac_Linux.sh
+
+```
+
+Windows:
+```
+
+Run_Windows.bat
+
+```
+
+Fill in:
+- your domain (example: https://yourdomain.com)  
+- your drive folder (FreeCloud)  
+- your local folder  
+- your password  
+
+---
+
+### 3. Start using it
+
+![Setup](https://kylebenzle.com/FreeCloud/Setup2.png)
+
+That’s it.
+
+- Add/remove files in your local folder → they sync to the web  
+- Add/remove files on the web → they sync to your computer  
+
+Access your files anywhere:
+```
+
+[https://yourdomain.com/FreeCloud](https://yourdomain.com/FreeCloud)
+
+```
+
+---
+
+## Local Folder
+
+This is just a normal folder on your computer.
+
+Example:
+```
+
+/Users/you/FreeCloud
+
+```
+
+If it doesn’t exist, it will be created.
+
+This is your main working folder:
+- anything here uploads to your server  
+- anything on the server downloads here  
+
+---
+
+## What This Is
+
+FreeCloud is a very simple self hosted cloud drive.
+
+No database  
+No install process  
+No accounts  
+
+You upload it and it works.
+
+---
+
+## What You Get
+
+- Your own cloud drive  
+- Your own storage  
+- Your own files  
+- Running on your own hosting  
+
+No subscriptions.
+
+---
+
+## Security
+
+- Optional password  
+- Real server side auth  
+- Files locked to storage folder  
+- No direct public access to stored files  
+
+Simple, but not wide open.
+
+---
+
+## Why This Exists
+
+Because paying for hosting and then paying again for storage makes no sense.
+
+You already have the space.
+
+Use it.
+```
