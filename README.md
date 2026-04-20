@@ -1,4 +1,3 @@
-```markdown
 # FreeCloud
 
 ![Setup](https://kylebenzle.com/FreeCloud/Setup0.png)
@@ -26,9 +25,7 @@ Upload everything inside the `server/` folder to your web host.
 
 Create a folder like this:
 ```
-
 public_html/FreeCloud/
-
 ```
 
 So on your host:
@@ -38,9 +35,7 @@ So on your host:
 
 Then go to:
 ```
-
-[https://yourdomain.com/FreeCloud](https://yourdomain.com/FreeCloud)
-
+https://yourdomain.com/FreeCloud
 ```
 
 ---
@@ -53,16 +48,12 @@ Run:
 
 Mac / Linux:
 ```
-
 ./Run_Mac_Linux.sh
-
 ```
 
 Windows:
 ```
-
 Run_Windows.bat
-
 ```
 
 Fill in:
@@ -79,14 +70,12 @@ Fill in:
 
 That’s it.
 
-- Add/remove files in your local folder → they sync to the web  
-- Add/remove files on the web → they sync to your computer  
+- add/remove files in your local folder → they sync to the web  
+- add/remove files on the web → they sync to your computer  
 
 Access your files anywhere:
 ```
-
-[https://yourdomain.com/FreeCloud](https://yourdomain.com/FreeCloud)
-
+https://yourdomain.com/FreeCloud
 ```
 
 ---
@@ -97,9 +86,7 @@ This is just a normal folder on your computer.
 
 Example:
 ```
-
 /Users/you/FreeCloud
-
 ```
 
 If it doesn’t exist, it will be created.
@@ -124,10 +111,10 @@ You upload it and it works.
 
 ## What You Get
 
-- Your own cloud drive  
-- Your own storage  
-- Your own files  
-- Running on your own hosting  
+- your own cloud drive  
+- your own storage  
+- your own files  
+- running on your own hosting  
 
 No subscriptions.
 
@@ -135,10 +122,10 @@ No subscriptions.
 
 ## Security
 
-- Optional password  
-- Real server side auth  
-- Files locked to storage folder  
-- No direct public access to stored files  
+- optional password  
+- real server side auth  
+- files locked to storage folder  
+- no direct public access to stored files  
 
 Simple, but not wide open.
 
@@ -151,4 +138,3 @@ Because paying for hosting and then paying again for storage makes no sense.
 You already have the space.
 
 Use it.
-```
