@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.kylebenzle.freecloud</id>
+  <metadata_license>GPL-3.0-or-later</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>FreeCloud</name>
+  <summary>Use your existing web hosting as a personal cloud drive</summary>
+  <description>
+    <p>
+      FreeCloud connects a local folder to storage on a PHP-enabled web host
+      that you control. It provides an Explorer-style cloud file browser,
+      background synchronization, and access to the same files through a web
+      interface.
+    </p>
+    <p>
+      Users upload the included server files to their own hosting account and
+      configure the desktop client with that website address.
+    </p>
+  </description>
+  <launchable type="desktop-id">freecloud.desktop</launchable>
+  <icon type="stock">freecloud</icon>
+  <categories>
+    <category>Network</category>
+    <category>FileTransfer</category>
+  </categories>
+  <url type="homepage">https://freecloud.wiki</url>
+  <url type="bugtracker">https://github.com/KyleBenzle/FreeCloud/issues</url>
+  <url type="vcs-browser">https://github.com/KyleBenzle/FreeCloud</url>
+  <developer id="io.github.kylebenzle">
+    <name>Kyle Benzle</name>
+  </developer>
+  <provides>
+    <binary>freecloud</binary>
+  </provides>
+  <releases>
+    <release version="2.1.0" date="2026-06-07">
+      <description>
+        <p>Initial packaged Linux desktop release.</p>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>

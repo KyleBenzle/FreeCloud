@@ -1,0 +1,25 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@ --with python3
+
+override_dh_auto_build:
+
+override_dh_auto_install:
+	install -d debian/freecloud/usr/bin
+	install -m 0755 packaging/linux/freecloud debian/freecloud/usr/bin/freecloud
+	install -d debian/freecloud/usr/share/freecloud
+	install -m 0644 freecloud_ui.py freecloud_cli.py debian/freecloud/usr/share/freecloud/
+	install -m 0644 logo.png icon.png FClogo.png debian/freecloud/usr/share/freecloud/
+	cp -a server debian/freecloud/usr/share/freecloud/
+	install -d debian/freecloud/usr/share/applications
+	install -m 0644 packaging/linux/freecloud.desktop debian/freecloud/usr/share/applications/freecloud.desktop
+	install -d debian/freecloud/usr/share/icons/hicolor/512x512/apps
+	install -m 0644 FClogo.png debian/freecloud/usr/share/icons/hicolor/512x512/apps/freecloud.png
+	install -d debian/freecloud/usr/share/metainfo
+	install -m 0644 packaging/linux/io.github.kylebenzle.freecloud.metainfo.xml \
+		debian/freecloud/usr/share/metainfo/io.github.kylebenzle.freecloud.metainfo.xml
+	install -d debian/freecloud/usr/share/man/man1
+	install -m 0644 packaging/linux/freecloud.1 debian/freecloud/usr/share/man/man1/freecloud.1
+	install -d debian/freecloud/usr/share/doc/freecloud
+	install -m 0644 README.md debian/freecloud/usr/share/doc/freecloud/README.md

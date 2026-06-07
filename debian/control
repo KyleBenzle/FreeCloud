@@ -1,0 +1,32 @@
+Source: freecloud
+Section: net
+Priority: optional
+Maintainer: Kyle Benzle <kbe@gmx.us>
+Build-Depends:
+ debhelper-compat (= 13),
+ dh-sequence-python3,
+Standards-Version: 4.7.2
+Rules-Requires-Root: no
+Homepage: https://freecloud.wiki
+Vcs-Browser: https://github.com/KyleBenzle/FreeCloud
+Vcs-Git: https://github.com/KyleBenzle/FreeCloud.git
+
+Package: freecloud
+Architecture: all
+Depends:
+ python3,
+ python3-tk,
+ xdg-utils,
+ ${misc:Depends},
+ ${python3:Depends},
+Recommends:
+ gir1.2-ayatanaappindicator3-0.1,
+ gir1.2-gtk-3.0,
+ python3-gi,
+Description: personal cloud drive using existing web hosting
+ FreeCloud turns storage space from an existing PHP web-hosting account into
+ a personal cloud drive. The desktop client provides a file browser and keeps
+ a selected local folder synchronized with the user's hosted FreeCloud drive.
+ .
+ The project also provides a browser file manager, a command-line sync client,
+ and server files that users can upload to their own web host.

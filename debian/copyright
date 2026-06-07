@@ -1,0 +1,41 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: FreeCloud
+Upstream-Contact: Kyle Benzle <kbe@gmx.us>
+Source: https://github.com/KyleBenzle/FreeCloud
+Files-Excluded:
+ __pycache__/*
+ android-app/app/release/*
+ android-app/gradle/wrapper/gradle-wrapper.jar
+ website/FreeCloud.zip
+Comment:
+ Generated binaries and archives that are not used by the Debian desktop
+ package are removed when repacking the upstream source.
+
+Files: *
+Copyright: 2026 Kyle Benzle <kbe@gmx.us>
+License: GPL-3+
+
+Files: packaging/linux/io.github.kylebenzle.freecloud.metainfo.xml
+Copyright: 2026 Kyle Benzle <kbe@gmx.us>
+License: GPL-3+
+
+Files:
+ android-app/gradlew
+ android-app/gradlew.bat
+Copyright: 2015 the original authors
+License: Apache-2.0
+ On Debian systems, the complete text of the Apache License version 2.0
+ can be found in "/usr/share/common-licenses/Apache-2.0".
+
+Files: debian/*
+Copyright: 2026 Kyle Benzle <kbe@gmx.us>
+License: GPL-3+
+
+License: GPL-3+
+ This program is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+ .
+ On Debian systems, the complete text of the GNU General Public License
+ version 3 can be found in "/usr/share/common-licenses/GPL-3".

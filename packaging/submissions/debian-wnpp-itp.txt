@@ -1,0 +1,28 @@
+To: submit@bugs.debian.org
+Subject: ITP: freecloud -- personal cloud drive using existing web hosting
+
+Package: wnpp
+Severity: wishlist
+Owner: Kyle Benzle <kbe@gmx.us>
+X-Debbugs-Cc: debian-devel@lists.debian.org
+
+* Package name    : freecloud
+  Version         : 2.1.0
+  Upstream Author : Kyle Benzle <kbe@gmx.us>
+* URL             : https://github.com/KyleBenzle/FreeCloud
+* License         : GPL-3+
+  Programming Lang: Python, PHP
+  Description     : personal cloud drive using existing web hosting
+
+FreeCloud turns storage space from an existing PHP web-hosting account into
+a personal cloud drive. The Linux desktop client provides an Explorer-style
+file browser and synchronizes a selected local folder with a user-controlled
+FreeCloud installation.
+
+The upstream project also includes the PHP server and web interface, an
+Android client, and a command-line synchronization client. The proposed
+Debian binary package installs the Python/Tk desktop and command-line client
+plus the server files users can upload to their own host.
+
+I plan to maintain this package and will seek sponsorship through Debian
+Mentors.

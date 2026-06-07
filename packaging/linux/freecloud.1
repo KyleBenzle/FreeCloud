@@ -1,0 +1,33 @@
+.TH FREECLOUD 1 "June 2026" "FreeCloud 2.1.0" "User Commands"
+.SH NAME
+freecloud \- synchronize files with a self-hosted FreeCloud drive
+.SH SYNOPSIS
+.B freecloud
+.SH DESCRIPTION
+.B FreeCloud
+is a desktop file browser and synchronization client for a FreeCloud
+installation hosted in a PHP-enabled web account.
+.PP
+On first launch, enter the full website address of the hosted installation,
+choose a local synchronization folder, and optionally enter a password.
+.SH FILES
+.TP
+.I ~/.config/freecloud/last_config.json
+Last-used desktop configuration.
+.TP
+.I ~/.local/state/freecloud/
+Logs, process state, and the cached remote file tree.
+.TP
+.I LOCAL_FOLDER/.freecloud_client.json
+Configuration for a synchronized local folder.
+.TP
+.I LOCAL_FOLDER/.freecloud_state.json
+Synchronization state for a local folder.
+.SH SECURITY
+The desktop client currently stores the configured password in a local JSON
+configuration file. Review the security notes in the installed README before
+using FreeCloud with sensitive data.
+.SH AUTHOR
+Kyle Benzle <kbe@gmx.us>
+.SH SEE ALSO
+Project website: https://freecloud.wiki

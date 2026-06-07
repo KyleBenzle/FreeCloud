@@ -903,7 +903,7 @@ class FreeCloudUi:
 
         tk.Label(
             form,
-            text="Password (Optional)",
+            text="Password (Optional — set on first connection)",
             bg=COLORS["panel"],
             fg=COLORS["ink"],
             anchor="w",
@@ -958,11 +958,11 @@ class FreeCloudUi:
         ).grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 18))
 
         steps = (
-            "Upload FreeCloud server files to your web host.",
-            "Open your FreeCloud website.",
-            "Enter the website address.",
-            "Choose a local folder.",
-            "Click Connect to FreeCloud.",
+            "Upload everything inside the Server folder to public_html/FreeCloud on your web host.",
+            "Enter your FreeCloud website address, such as https://yourdomain.com/FreeCloud.",
+            "Choose the local folder you want to sync. The default is ~/FreeCloud.",
+            "Choose an optional password. On first connection, this becomes your FreeCloud password.",
+            "Click Connect to FreeCloud to finish setup and start syncing.",
         )
         for index, text in enumerate(steps, start=1):
             tk.Label(
@@ -1002,7 +1002,12 @@ class FreeCloudUi:
         ).grid(row=security_row + 1, column=0, columnspan=2, sticky="ew")
         tk.Label(
             help_body,
-            text="Your password is stored locally on this computer and is never sent anywhere except your FreeCloud server.",
+            text=(
+                "The first password you enter here is securely hashed and set on your "
+                "FreeCloud server. The app keeps your password locally so it can connect "
+                "and sync. If you already created the drive through the website, enter "
+                "that same password here. Leave it blank only if you want no password."
+            ),
             bg="#f7fbff",
             fg=COLORS["muted"],
             anchor="w",

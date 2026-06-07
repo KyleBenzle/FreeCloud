@@ -1,0 +1,36 @@
+Summary:
+[needs-packaging] freecloud
+
+Description:
+Please package FreeCloud for Ubuntu.
+
+FreeCloud turns storage space from an existing PHP web-hosting account into
+a personal cloud drive. Its Linux desktop client provides an Explorer-style
+file browser and synchronizes a selected local folder with a user-controlled
+FreeCloud installation.
+
+Upstream source:
+https://github.com/KyleBenzle/FreeCloud
+
+Homepage:
+https://freecloud.wiki
+
+License:
+GNU General Public License version 3 or later (GPL-3+)
+
+Latest upstream version:
+2.1.0
+
+Upstream contact:
+Kyle Benzle <kbe@gmx.us>
+
+Debian WNPP bug:
+ADD THE DEBIAN BUG URL HERE AFTER SUBMITTING THE ITP
+
+Packaging status:
+Initial Debian packaging is maintained in the upstream repository under
+debian/. The preferred path is acceptance into Debian followed by automatic
+sync into Ubuntu.
+
+Tags:
+needs-packaging

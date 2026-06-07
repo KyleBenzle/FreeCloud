@@ -28,6 +28,11 @@ then you may already be paying for the same kind of disk space more than once.
 
 FreeCloud is the simple version of using that hosting space instead.
 
+## License
+
+FreeCloud is free software licensed under the
+[GNU General Public License version 3 or later](LICENSE).
+
 ## Public Links
 
 - Website: `https://freecloud.wiki`
@@ -94,12 +99,11 @@ Run_Windows.bat
 ```
 
 In the desktop app, enter:
-- `Domain`: `https://yourdomain.com`
-- `Cloud drive folder`: `FreeCloud`
-- `Local folder`: your normal local sync folder
-- `FreeCloud password`: the password you want this hosted drive to use
+- `Website Address`: `https://yourdomain.com/FreeCloud`
+- `Local Folder`: your normal local sync folder, such as `~/FreeCloud`
+- `Password`: an optional password for this hosted drive
 
-On first save:
+On first connection:
 - if the hosted drive is not initialized yet, the app creates it
 - if it is already initialized, the app uses the existing password
 
@@ -123,8 +127,7 @@ You can:
 The Android app connects to the same hosted FreeCloud install.
 
 Use:
-- `Domain`: `https://yourdomain.com`
-- `Drive name`: `FreeCloud`
+- `Website Address`: `https://yourdomain.com/FreeCloud`
 - `Password`: the same FreeCloud password
 - `Phone folder`: the local Android folder you want to use
 
