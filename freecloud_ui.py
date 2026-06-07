@@ -1312,6 +1312,7 @@ class FreeCloudUi:
         self.files_tree.bind("<ButtonPress-1>", self.on_file_tree_button_press)
         self.files_tree.bind("<B1-Motion>", self.on_file_tree_drag_motion)
         self.files_tree.bind("<ButtonRelease-1>", self.on_file_tree_button_release)
+        self.files_tree.bind("<Double-1>", self.open_file_tree_item)
         self.files_tree.bind("<Button-3>", self.show_file_tree_item_menu)
 
         files_scrollbar = styled_scrollbar(list_shell, tk.VERTICAL, self.files_tree.yview, width=16)
@@ -2153,20 +2154,17 @@ class FreeCloudUi:
                 self.drag_source_widget.configure(cursor="fleur")
 
     def on_file_tree_button_release(self, event: tk.Event[tk.Misc]) -> None:
-        self.finish_remote_drag(event, open_file_on_click=True)
+        self.finish_remote_drag(event)
 
     def on_remote_tree_button_release(self, event: tk.Event[tk.Misc]) -> None:
-        self.finish_remote_drag(event, open_file_on_click=False)
+        self.finish_remote_drag(event)
 
-    def finish_remote_drag(self, event: tk.Event[tk.Misc], open_file_on_click: bool) -> None:
+    def finish_remote_drag(self, event: tk.Event[tk.Misc]) -> None:
         try:
             if self.drag_active and self.drag_source_entry is not None:
                 target_folder = self.drop_target_folder(event.x_root, event.y_root)
                 if target_folder is not None:
                     self.move_dragged_remote_item(self.drag_source_entry, target_folder)
-                return
-            if open_file_on_click:
-                self.open_file_tree_item(event)
         finally:
             self.clear_remote_drag()
 
