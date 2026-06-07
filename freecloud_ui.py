@@ -480,6 +480,12 @@ class FreeCloudUi:
         self.remote_render_generation = 0
         self.last_rendered_folder_key = ""
         self.file_tree_entries: dict[str, dict[str, object]] = {}
+        self.drag_source_entry: dict[str, object] | None = None
+        self.drag_source_item_id = ""
+        self.drag_start_xy: tuple[int, int] | None = None
+        self.drag_active = False
+        self.drag_source_widget: ttk.Treeview | None = None
+        self.remote_move_in_progress = False
         self.remote_tree_rendering = False
         self.remote_tree_paths: dict[str, str] = {}
         self.remote_tree_items: dict[str, str] = {}
@@ -1184,6 +1190,9 @@ class FreeCloudUi:
         self.remote_tree.configure(yscrollcommand=self.on_remote_tree_scroll)
         self.remote_tree.bind("<Configure>", self.update_remote_tree_scrollbar, add="+")
         self.remote_tree.bind("<<TreeviewSelect>>", self.on_remote_tree_select)
+        self.remote_tree.bind("<ButtonPress-1>", self.on_remote_tree_button_press)
+        self.remote_tree.bind("<B1-Motion>", self.on_remote_tree_drag_motion)
+        self.remote_tree.bind("<ButtonRelease-1>", self.on_remote_tree_button_release)
 
         tk.Frame(sidebar, bg=COLORS["line"], height=1).grid(row=2, column=0, sticky="ew", padx=10)
         tk.Label(
@@ -1232,10 +1241,10 @@ class FreeCloudUi:
 
         self.back_button = self.nav_bubble_button(toolbar, "←", self.go_back_remote_folder)
         self.back_button.grid(row=0, column=0, padx=(0, 3))
-        self.forward_button = self.nav_bubble_button(toolbar, "→", self.go_forward_remote_folder)
-        self.forward_button.grid(row=0, column=1, padx=(0, 3))
         self.up_button = self.nav_bubble_button(toolbar, "↑", self.go_up_remote_folder, font_size=16)
-        self.up_button.grid(row=0, column=2, padx=(0, 8))
+        self.up_button.grid(row=0, column=1, padx=(0, 3))
+        self.forward_button = self.nav_bubble_button(toolbar, "→", self.go_forward_remote_folder)
+        self.forward_button.grid(row=0, column=2, padx=(0, 8))
 
         self.path_entry = tk.Entry(
             toolbar,
@@ -1300,7 +1309,9 @@ class FreeCloudUi:
         self.files_tree.column("type", width=140, minwidth=100, stretch=False, anchor="w")
         self.files_tree.column("modified", width=190, minwidth=150, stretch=False, anchor="w")
         self.files_tree.grid(row=0, column=0, sticky="nsew")
-        self.files_tree.bind("<ButtonRelease-1>", self.open_file_tree_item)
+        self.files_tree.bind("<ButtonPress-1>", self.on_file_tree_button_press)
+        self.files_tree.bind("<B1-Motion>", self.on_file_tree_drag_motion)
+        self.files_tree.bind("<ButtonRelease-1>", self.on_file_tree_button_release)
         self.files_tree.bind("<Button-3>", self.show_file_tree_item_menu)
 
         files_scrollbar = styled_scrollbar(list_shell, tk.VERTICAL, self.files_tree.yview, width=16)
@@ -2093,6 +2104,82 @@ class FreeCloudUi:
             )
             self.file_tree_entries[item_id] = entry
 
+    def on_file_tree_button_press(self, event: tk.Event[tk.Misc]) -> None:
+        if self.files_tree.identify_region(event.x, event.y) != "cell":
+            self.clear_remote_drag()
+            return
+        item_id = self.files_tree.identify_row(event.y)
+        entry = self.file_tree_entries.get(item_id)
+        if entry is None:
+            return
+        self.drag_source_entry = entry
+        self.drag_source_item_id = item_id
+        self.drag_start_xy = (event.x_root, event.y_root)
+        self.drag_active = False
+        self.drag_source_widget = self.files_tree
+
+    def on_file_tree_drag_motion(self, event: tk.Event[tk.Misc]) -> None:
+        self.on_remote_drag_motion(event)
+
+    def on_remote_tree_button_press(self, event: tk.Event[tk.Misc]) -> None:
+        item_id = self.remote_tree.identify_row(event.y)
+        path = self.remote_tree_paths.get(item_id)
+        if not path:
+            self.clear_remote_drag()
+            return
+        self.drag_source_entry = {
+            "path": path,
+            "name": path.rsplit("/", 1)[-1],
+            "type": "dir",
+        }
+        self.drag_source_item_id = item_id
+        self.drag_start_xy = (event.x_root, event.y_root)
+        self.drag_active = False
+        self.drag_source_widget = self.remote_tree
+
+    def on_remote_tree_drag_motion(self, event: tk.Event[tk.Misc]) -> None:
+        self.on_remote_drag_motion(event)
+
+    def on_remote_drag_motion(self, event: tk.Event[tk.Misc]) -> None:
+        if self.drag_source_entry is None or self.drag_start_xy is None:
+            return
+        start_x, start_y = self.drag_start_xy
+        if abs(event.x_root - start_x) + abs(event.y_root - start_y) < 8:
+            return
+        if not self.drag_active:
+            self.drag_active = True
+            if self.drag_source_widget is not None:
+                self.drag_source_widget.selection_set(self.drag_source_item_id)
+                self.drag_source_widget.configure(cursor="fleur")
+
+    def on_file_tree_button_release(self, event: tk.Event[tk.Misc]) -> None:
+        self.finish_remote_drag(event, open_file_on_click=True)
+
+    def on_remote_tree_button_release(self, event: tk.Event[tk.Misc]) -> None:
+        self.finish_remote_drag(event, open_file_on_click=False)
+
+    def finish_remote_drag(self, event: tk.Event[tk.Misc], open_file_on_click: bool) -> None:
+        try:
+            if self.drag_active and self.drag_source_entry is not None:
+                target_folder = self.drop_target_folder(event.x_root, event.y_root)
+                if target_folder is not None:
+                    self.move_dragged_remote_item(self.drag_source_entry, target_folder)
+                return
+            if open_file_on_click:
+                self.open_file_tree_item(event)
+        finally:
+            self.clear_remote_drag()
+
+    def clear_remote_drag(self) -> None:
+        source_widget = self.drag_source_widget
+        self.drag_source_entry = None
+        self.drag_source_item_id = ""
+        self.drag_start_xy = None
+        self.drag_active = False
+        self.drag_source_widget = None
+        if source_widget is not None and not self.remote_move_in_progress:
+            source_widget.configure(cursor="")
+
     def open_file_tree_item(self, event: tk.Event[tk.Misc]) -> None:
         if self.files_tree.identify_region(event.x, event.y) != "cell":
             return
@@ -2106,6 +2193,107 @@ class FreeCloudUi:
             self.open_remote_folder(path)
         else:
             self.open_local_file(path, name)
+
+    def drop_target_folder(self, root_x: int, root_y: int) -> str | None:
+        widget = self.root.winfo_containing(root_x, root_y)
+        while widget is not None:
+            if widget == self.remote_tree:
+                local_y = root_y - self.remote_tree.winfo_rooty()
+                item_id = self.remote_tree.identify_row(local_y)
+                return self.remote_tree_paths.get(item_id)
+            if widget == self.files_tree:
+                local_y = root_y - self.files_tree.winfo_rooty()
+                item_id = self.files_tree.identify_row(local_y)
+                entry = self.file_tree_entries.get(item_id)
+                if entry is not None and str(entry.get("type") or "") == "dir":
+                    return cli.remote_path(str(entry.get("path") or ""))
+                return self.current_remote_path
+            widget = widget.master
+        return None
+
+    def move_dragged_remote_item(self, entry: dict[str, object], target_folder: str) -> None:
+        if self.remote_move_in_progress:
+            return
+        source_path = cli.remote_path(str(entry.get("path") or ""))
+        if not source_path:
+            return
+        name = source_path.rsplit("/", 1)[-1]
+        clean_target_folder = cli.remote_path(target_folder)
+        target_path = "/".join(part for part in (clean_target_folder, name) if part)
+        source_parent = source_path.rpartition("/")[0]
+        if target_path == source_path or clean_target_folder == source_parent:
+            return
+        if str(entry.get("type") or "") == "dir" and (
+            clean_target_folder == source_path or clean_target_folder.startswith(source_path + "/")
+        ):
+            messagebox.showerror("Move Cloud Item", "Cannot move a folder into itself.")
+            return
+        client = self.current_client()
+        self.remote_move_in_progress = True
+        self.files_tree.configure(cursor="watch")
+        self.remote_tree.configure(cursor="watch")
+
+        def worker() -> None:
+            try:
+                client.move(source_path, target_path)
+            except Exception as exc:
+                self.root.after(0, lambda error=exc: self.finish_remote_move_error(error))
+                return
+            self.root.after(0, lambda: self.finish_remote_move(source_path, target_path))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def finish_remote_move(self, source_path: str, target_path: str) -> None:
+        self.remote_move_in_progress = False
+        self.files_tree.configure(cursor="")
+        self.remote_tree.configure(cursor="")
+        self.apply_remote_move_to_cache(source_path, target_path)
+        self.last_rendered_folder_key = ""
+        self.render_current_folder_from_cache()
+        self.append(f"Moved cloud item: {source_path} -> {target_path}\n")
+        threading.Thread(target=self.save_remote_tree_cache, daemon=True).start()
+
+    def finish_remote_move_error(self, exc: Exception) -> None:
+        self.remote_move_in_progress = False
+        self.files_tree.configure(cursor="")
+        self.remote_tree.configure(cursor="")
+        messagebox.showerror("Move Cloud Item", str(exc))
+
+    def apply_remote_move_to_cache(self, source_path: str, target_path: str) -> None:
+        source_path = cli.remote_path(source_path)
+        target_path = cli.remote_path(target_path)
+        updated = []
+        for entry in self.remote_manifest_cache:
+            path = cli.remote_path(str(entry.get("path") or ""))
+            if path == source_path or path.startswith(source_path + "/"):
+                suffix = path[len(source_path):]
+                moved = dict(entry)
+                moved["path"] = target_path + suffix
+                if path == source_path:
+                    moved["name"] = target_path.rsplit("/", 1)[-1]
+                updated.append(moved)
+            else:
+                updated.append(entry)
+        self.remote_manifest_cache = updated
+        self.current_remote_path = self.rewrite_moved_path(
+            self.current_remote_path, source_path, target_path
+        )
+        self.remote_back_stack = [
+            self.rewrite_moved_path(path, source_path, target_path)
+            for path in self.remote_back_stack
+        ]
+        self.remote_forward_stack = [
+            self.rewrite_moved_path(path, source_path, target_path)
+            for path in self.remote_forward_stack
+        ]
+        self.remote_tree_signature = ()
+
+    @staticmethod
+    def rewrite_moved_path(path: str, source_path: str, target_path: str) -> str:
+        clean_path = cli.remote_path(path)
+        if clean_path == source_path or clean_path.startswith(source_path + "/"):
+            return target_path + clean_path[len(source_path):]
+        return clean_path
 
     def show_file_tree_item_menu(self, event: tk.Event[tk.Misc]) -> None:
         item_id = self.files_tree.identify_row(event.y)

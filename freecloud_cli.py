@@ -197,6 +197,14 @@ class FreeCloudClient:
     def mkdir(self, path: str) -> None:
         self.request("mkdir", {"path": remote_path(path)}, data=b"", method="POST")
 
+    def move(self, from_path: str, to_path: str) -> None:
+        self.request(
+            "move",
+            {"from": remote_path(from_path), "to": remote_path(to_path)},
+            data=b"",
+            method="POST",
+        )
+
     def upload(self, local_file: Path, path: str) -> None:
         mtime = int(local_file.stat().st_mtime)
         with local_file.open("rb") as handle:

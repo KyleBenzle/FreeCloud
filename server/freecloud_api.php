@@ -251,6 +251,44 @@ function storageSummary(string $root): array
     ];
 }
 
+function movePath(string $root, string $fromPath, string $toPath): void
+{
+    $fromPath = normalizeRelativePath($fromPath);
+    $toPath = normalizeRelativePath($toPath);
+    if ($fromPath === '' || $toPath === '') {
+        jsonResponse(['ok' => false, 'error' => 'Missing move path.'], 400);
+    }
+    if ($fromPath === $toPath) {
+        jsonResponse(['ok' => true, 'path' => $toPath]);
+    }
+
+    $source = resolveExistingPath($root, $fromPath);
+    if ($source === null || $source === $root) {
+        jsonResponse(['ok' => false, 'error' => 'Item not found.'], 404);
+    }
+
+    $destination = pathToAbsolute($root, $toPath);
+    $destinationDir = dirname($destination);
+    $realDestinationDir = realpath($destinationDir);
+    if (
+        $realDestinationDir === false ||
+        !is_dir($realDestinationDir) ||
+        !isWithinRoot($realDestinationDir, $root) ||
+        !isWithinRoot($destination, $root)
+    ) {
+        jsonResponse(['ok' => false, 'error' => 'Move target folder not found.'], 404);
+    }
+    if (file_exists($destination)) {
+        jsonResponse(['ok' => false, 'error' => 'An item with that name already exists.'], 409);
+    }
+    if (is_dir($source) && isWithinRoot($destination, $source)) {
+        jsonResponse(['ok' => false, 'error' => 'Cannot move a folder into itself.'], 400);
+    }
+    if (!@rename($source, $destination)) {
+        jsonResponse(['ok' => false, 'error' => 'Could not move item.'], 500);
+    }
+}
+
 function streamFile(string $path): void
 {
     $handle = fopen($path, 'rb');
@@ -322,6 +360,16 @@ if ($action === 'list') {
 
 if ($action === 'storage') {
     jsonResponse(['ok' => true, 'storage' => storageSummary($realStorageRoot)]);
+}
+
+if ($action === 'move') {
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        jsonResponse(['ok' => false, 'error' => 'move requires POST.'], 405);
+    }
+    $fromPath = (string) ($_GET['from'] ?? $_POST['from'] ?? '');
+    $toPath = (string) ($_GET['to'] ?? $_POST['to'] ?? '');
+    movePath($realStorageRoot, $fromPath, $toPath);
+    jsonResponse(['ok' => true, 'path' => normalizeRelativePath($toPath)]);
 }
 
 if ($action === 'mkdir') {
