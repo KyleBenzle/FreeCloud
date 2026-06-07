@@ -225,6 +225,32 @@ function listDirectory(string $root, string $relativePath): array
     return $entries;
 }
 
+function storageSummary(string $root): array
+{
+    $usedBytes = 0;
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::LEAVES_ONLY
+    );
+
+    foreach ($iterator as $item) {
+        if ($item->isFile() && !$item->isLink() && $item->getFilename() !== '.htaccess') {
+            $usedBytes += max(0, (int) $item->getSize());
+        }
+    }
+
+    $freeBytes = disk_free_space($root);
+    $capacityBytes = $freeBytes === false ? 0 : $usedBytes + max(0, (int) $freeBytes);
+    $percentUsed = $capacityBytes > 0 ? min(100, max(0, (int) round(($usedBytes / $capacityBytes) * 100))) : 0;
+
+    return [
+        'used_bytes' => $usedBytes,
+        'available_bytes' => $freeBytes === false ? null : max(0, (int) $freeBytes),
+        'capacity_bytes' => $capacityBytes > 0 ? $capacityBytes : null,
+        'percent_used' => $capacityBytes > 0 ? $percentUsed : null,
+    ];
+}
+
 function streamFile(string $path): void
 {
     $handle = fopen($path, 'rb');
@@ -292,6 +318,10 @@ if ($action === 'manifest') {
 if ($action === 'list') {
     $path = normalizeRelativePath((string) ($_GET['path'] ?? ''));
     jsonResponse(['ok' => true, 'path' => $path, 'entries' => listDirectory($realStorageRoot, $path)]);
+}
+
+if ($action === 'storage') {
+    jsonResponse(['ok' => true, 'storage' => storageSummary($realStorageRoot)]);
 }
 
 if ($action === 'mkdir') {

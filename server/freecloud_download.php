@@ -28,6 +28,12 @@ function authRequired(?array $config): bool
     return is_array($config) && (string) ($config['password_hash'] ?? '') !== '';
 }
 
+function headerValue(string $name): string
+{
+    $serverKey = 'HTTP_' . strtoupper(str_replace('-', '_', $name));
+    return isset($_SERVER[$serverKey]) ? (string) $_SERVER[$serverKey] : '';
+}
+
 function requireAuth(?array $config): void
 {
     if ($config === null) {
@@ -35,7 +41,23 @@ function requireAuth(?array $config): void
         exit('FreeCloud is not set up.');
     }
 
-    if (authRequired($config) && !($_SESSION['auth'] ?? false)) {
+    if (!authRequired($config)) {
+        return;
+    }
+
+    if ((bool) ($_SESSION['auth'] ?? false)) {
+        return;
+    }
+
+    $password = headerValue('X-FreeCloud-Password');
+    if ($password === '') {
+        $authorization = headerValue('Authorization');
+        if (str_starts_with($authorization, 'Bearer ')) {
+            $password = substr($authorization, 7);
+        }
+    }
+
+    if ($password === '' || !password_verify($password, (string) ($config['password_hash'] ?? ''))) {
         http_response_code(403);
         exit('Login required.');
     }

@@ -1,5 +1,9 @@
 #!/usr/bin/env sh
 cd "$(dirname "$0")" || exit 1
+STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
+UI_LOG="$STATE_HOME/freecloud/ui_error.log"
+mkdir -p "$(dirname "$UI_LOG")"
+: >"$UI_LOG"
 
 find_python() {
     if command -v python3 >/dev/null 2>&1; then
@@ -66,12 +70,22 @@ if [ -z "$python_cmd" ]; then
 fi
 
 if has_tkinter "$python_cmd"; then
-    "$python_cmd" freecloud_ui.py
+    "$python_cmd" freecloud_ui.py "$@" >>"$UI_LOG" 2>&1
+    status=$?
 else
     if install_tkinter "$python_cmd"; then
-        "$python_cmd" freecloud_ui.py
+        "$python_cmd" freecloud_ui.py "$@" >>"$UI_LOG" 2>&1
+        status=$?
     else
         echo "Starting command-line sync instead."
         "$python_cmd" freecloud_cli.py
+        status=$?
     fi
 fi
+
+if [ "${status:-0}" -ne 0 ]; then
+    echo "FreeCloud exited with an error."
+    echo "See: $UI_LOG"
+fi
+
+exit "${status:-0}"

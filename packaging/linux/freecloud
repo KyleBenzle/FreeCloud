@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+# Package launcher for Linux installs.
+#
+# A Debian/Ubuntu package can install this file as `/usr/bin/freecloud`
+# and install the Python app files into `/usr/share/freecloud`.
+
+set -eu
+
+APP_DIR="/usr/share/freecloud"
+exec python3 "$APP_DIR/freecloud_ui.py" "$@"

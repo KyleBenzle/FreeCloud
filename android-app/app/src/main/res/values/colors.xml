@@ -1,0 +1,13 @@
+<resources>
+    <color name="freecloud_bg">#EEF7FF</color>
+    <color name="freecloud_panel">#FFFFFF</color>
+    <color name="freecloud_blue">#4B96D1</color>
+    <color name="freecloud_blue_dark">#2B74B0</color>
+    <color name="freecloud_ink">#18324A</color>
+    <color name="freecloud_muted">#5B7691</color>
+    <color name="freecloud_line">#B9D7EE</color>
+    <color name="freecloud_line_strong">#88BFE5</color>
+    <color name="freecloud_success">#2F7D66</color>
+    <color name="freecloud_success_bg">#DFF4EC</color>
+    <color name="freecloud_danger">#B25555</color>
+</resources>

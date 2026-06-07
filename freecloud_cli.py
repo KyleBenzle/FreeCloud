@@ -31,8 +31,32 @@ from typing import Any
 
 
 APP_DIR = Path(__file__).resolve().parent / "server"
-LAST_CONFIG_PATH = Path(__file__).resolve().parent / ".freecloud_last_config.json"
+LEGACY_LAST_CONFIG_PATH = Path(__file__).resolve().parent / ".freecloud_last_config.json"
 DEFAULT_INTERVAL = 10
+APP_NAME = "freecloud"
+
+
+def app_config_dir() -> Path:
+    """Return the per-user config folder used by the desktop/CLI app.
+
+    Linux packages should not write settings beside files installed in
+    `/usr/share/freecloud`, so new installs use the standard XDG location.
+    """
+    if os.name == "nt":
+        return Path(os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))) / "FreeCloud"
+    return Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / APP_NAME
+
+
+def app_state_dir() -> Path:
+    """Return the per-user state/log folder."""
+    if os.name == "nt":
+        return Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "FreeCloud"
+    return Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))) / APP_NAME
+
+
+CONFIG_DIR = app_config_dir()
+STATE_DIR = app_state_dir()
+LAST_CONFIG_PATH = CONFIG_DIR / "last_config.json"
 
 
 class FreeCloudApiError(RuntimeError):
@@ -73,10 +97,16 @@ def normalize_drive_name(value: str) -> str:
 
 
 def remote_path(path: str) -> str:
+    # Keep client-side paths predictable before they reach the PHP normalizer.
+    # A parent segment backs up one clean segment instead of becoming a name.
     parts = []
     for part in path.replace("\\", "/").split("/"):
         part = part.strip()
-        if not part or part in {".", ".."}:
+        if not part or part == ".":
+            continue
+        if part == "..":
+            if parts:
+                parts.pop()
             continue
         parts.append(part)
     return "/".join(parts)
@@ -157,6 +187,13 @@ class FreeCloudClient:
         data = self.request("manifest")
         return list(data.get("entries", []))
 
+    def list(self, path: str = "") -> list[dict[str, Any]]:
+        data = self.request("list", {"path": remote_path(path)})
+        return list(data.get("entries", []))
+
+    def storage(self) -> dict[str, Any]:
+        return dict(self.request("storage"))
+
     def mkdir(self, path: str) -> None:
         self.request("mkdir", {"path": remote_path(path)}, data=b"", method="POST")
 
@@ -201,6 +238,7 @@ def load_json(path: Path, fallback: Any) -> Any:
 
 
 def save_json(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
 
 
@@ -245,6 +283,8 @@ def sync_once(client: FreeCloudClient, local_root: Path, delete_remote: bool = F
     counts = {"uploaded": 0, "downloaded": 0, "deleted_local": 0, "deleted_remote": 0, "conflicts": 0}
 
     for path in all_paths:
+        # Three-way sync: compare local and remote against the last manifest
+        # so deletes and edits can be handled differently.
         local_entry = local.get(path)
         remote_entry = remote.get(path)
         previous_entry = previous.get(path)
@@ -455,6 +495,10 @@ def load_or_setup(args: argparse.Namespace) -> dict[str, Any]:
     cfg = load_json(LAST_CONFIG_PATH, {})
     if cfg:
         return cfg
+    legacy_cfg = load_json(LEGACY_LAST_CONFIG_PATH, {})
+    if legacy_cfg:
+        save_json(LAST_CONFIG_PATH, legacy_cfg)
+        return legacy_cfg
     return run_setup()
 
 

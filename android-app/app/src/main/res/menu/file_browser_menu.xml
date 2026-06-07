@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/menu_start_sync"
+        android:title="Start Sync" />
+    <item
+        android:id="@+id/menu_stop_sync"
+        android:title="Stop Sync" />
+    <item
+        android:id="@+id/menu_view_web"
+        android:title="View On Web" />
+    <item
+        android:id="@+id/menu_toggle_activity"
+        android:title="Activity" />
+    <item
+        android:id="@+id/menu_edit_setup"
+        android:title="Edit Setup" />
+</menu>

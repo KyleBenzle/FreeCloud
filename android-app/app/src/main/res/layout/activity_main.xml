@@ -1,0 +1,316 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/freecloud_bg"
+    android:orientation="vertical"
+    android:paddingLeft="6dp"
+    android:paddingTop="10dp"
+    android:paddingRight="6dp"
+    android:paddingBottom="10dp">
+
+    <LinearLayout
+        android:id="@+id/topBarCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/freecloud_card_bg"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="18dp">
+
+        <ImageView
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:contentDescription="@string/app_name"
+            android:src="@drawable/freecloud_logo" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="14dp"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="FreeCloud"
+                android:textColor="@color/freecloud_ink"
+                android:textSize="30sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Simple cloud drive and local sync."
+                android:textColor="@color/freecloud_muted"
+                android:textSize="14sp" />
+        </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/menuButton"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:layout_marginStart="10dp"
+            android:layout_marginBottom="15dp"
+            android:background="@drawable/freecloud_status_bg"
+            android:contentDescription="Menu"
+            android:padding="11dp"
+            android:src="@drawable/ic_menu_lines"
+            android:tint="@color/freecloud_blue_dark"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="12dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:id="@+id/setupCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/freecloud_card_bg"
+                android:orientation="vertical"
+                android:padding="20dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Connect Your Drive"
+                    android:textColor="@color/freecloud_ink"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Use the website address and the password you created when FreeCloud was first installed on your server."
+                    android:textColor="@color/freecloud_muted"
+                    android:textSize="14sp" />
+
+                <EditText
+                    android:id="@+id/domainInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:background="@drawable/freecloud_input_bg"
+                    android:hint="Domain, like https://yourdomain.com"
+                    android:inputType="textUri"
+                    android:paddingHorizontal="16dp"
+                    android:paddingVertical="14dp"
+                    android:text="https://kylebenzle.com" />
+
+                <EditText
+                    android:id="@+id/driveInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:background="@drawable/freecloud_input_bg"
+                    android:hint="Remote folder, like FreeCloud"
+                    android:inputType="text"
+                    android:paddingHorizontal="16dp"
+                    android:paddingVertical="14dp"
+                    android:text="FreeCloud" />
+
+                <EditText
+                    android:id="@+id/passwordInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:background="@drawable/freecloud_input_bg"
+                    android:hint="Password from server setup"
+                    android:inputType="textPassword"
+                    android:paddingHorizontal="16dp"
+                    android:paddingVertical="14dp" />
+
+                <TextView
+                    android:id="@+id/folderPathText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:text="No phone folder selected yet."
+                    android:textColor="@color/freecloud_muted"
+                    android:textSize="15sp" />
+
+                <Button
+                    android:id="@+id/pickFolderButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Choose Phone Folder"
+                    app:cornerRadius="26dp" />
+
+                <TextView
+                    android:id="@+id/setupMessage"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:textColor="@color/freecloud_muted"
+                    android:textSize="14sp" />
+
+                <Button
+                    android:id="@+id/saveSetupButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:text="Start Syncing"
+                    app:cornerRadius="26dp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/runningCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/freecloud_card_bg"
+                android:orientation="vertical"
+                android:paddingLeft="10dp"
+                android:paddingTop="20dp"
+                android:paddingRight="10dp"
+                android:paddingBottom="20dp"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="My Synced Files"
+                        android:textColor="@color/freecloud_ink"
+                        android:textSize="24sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/statusText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
+                        android:background="@drawable/freecloud_status_bg"
+                        android:paddingHorizontal="14dp"
+                        android:paddingVertical="8dp"
+                        android:text="Stopped"
+                        android:textColor="@color/freecloud_blue_dark"
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/serverValue"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:textColor="@color/freecloud_ink"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/localFolderValue"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:textColor="@color/freecloud_ink"
+                    android:textSize="14sp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="18dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/upFolderButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="↑ Up"
+                        app:cornerRadius="22dp" />
+
+                    <TextView
+                        android:id="@+id/currentFolderText"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
+                        android:layout_weight="1"
+                        android:text="Folder: /"
+                        android:textColor="@color/freecloud_ink"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/fileCountText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="0 items in this folder"
+                    android:textColor="@color/freecloud_muted"
+                    android:textSize="14sp" />
+
+                <LinearLayout
+                    android:id="@+id/filesRecyclerView"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:minHeight="560dp"
+                    android:orientation="vertical"
+                    android:paddingLeft="0dp"
+                    android:paddingTop="4dp"
+                    android:paddingRight="0dp"
+                    android:paddingBottom="4dp" />
+
+                <TextView
+                    android:id="@+id/emptyFilesText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:background="@drawable/freecloud_subtle_panel_bg"
+                    android:padding="16dp"
+                    android:text="No synced files yet. Put a file in the chosen phone folder or upload one from the web."
+                    android:textColor="@color/freecloud_muted"
+                    android:textSize="14sp" />
+
+                <LinearLayout
+                    android:id="@+id/activitySection"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="18dp"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Activity"
+                        android:textColor="@color/freecloud_ink"
+                        android:textSize="18sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/logText"
+                        android:layout_width="match_parent"
+                        android:layout_height="96dp"
+                        android:layout_marginTop="10dp"
+                        android:background="@drawable/freecloud_subtle_panel_bg"
+                        android:padding="14dp"
+                        android:scrollbars="vertical"
+                        android:textColor="@color/freecloud_ink"
+                        android:textSize="14sp" />
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>
