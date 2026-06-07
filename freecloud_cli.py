@@ -34,6 +34,7 @@ APP_DIR = Path(__file__).resolve().parent / "server"
 LEGACY_LAST_CONFIG_PATH = Path(__file__).resolve().parent / ".freecloud_last_config.json"
 DEFAULT_INTERVAL = 10
 APP_NAME = "freecloud"
+VERSION = "2.1.0"
 
 
 def app_config_dir() -> Path:
@@ -512,6 +513,7 @@ def load_or_setup(args: argparse.Namespace) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="FreeCloud Linux CLI sync tool")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     parser.add_argument("--config", help="Path to .freecloud_client.json")
     parser.add_argument("--local", help="Local sync folder")
     parser.add_argument("--once", action="store_true", help="Run one sync pass and exit")

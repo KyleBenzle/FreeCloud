@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+freecloud-cli --version
+freecloud-cli --help >/dev/null
+python3 - <<'PY'
+import ast
+from pathlib import Path
+
+for path in (
+    Path("/usr/share/freecloud/freecloud_cli.py"),
+    Path("/usr/share/freecloud/freecloud_ui.py"),
+):
+    ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+PY

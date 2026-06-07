@@ -8,6 +8,7 @@ override_dh_auto_build:
 override_dh_auto_install:
 	install -d debian/freecloud/usr/bin
 	install -m 0755 packaging/linux/freecloud debian/freecloud/usr/bin/freecloud
+	install -m 0755 packaging/linux/freecloud-cli debian/freecloud/usr/bin/freecloud-cli
 	install -d debian/freecloud/usr/share/freecloud
 	install -m 0644 freecloud_ui.py freecloud_cli.py debian/freecloud/usr/share/freecloud/
 	install -m 0644 logo.png icon.png FClogo.png debian/freecloud/usr/share/freecloud/
@@ -21,5 +22,6 @@ override_dh_auto_install:
 		debian/freecloud/usr/share/metainfo/io.github.kylebenzle.freecloud.metainfo.xml
 	install -d debian/freecloud/usr/share/man/man1
 	install -m 0644 packaging/linux/freecloud.1 debian/freecloud/usr/share/man/man1/freecloud.1
+	install -m 0644 packaging/linux/freecloud-cli.1 debian/freecloud/usr/share/man/man1/freecloud-cli.1
 	install -d debian/freecloud/usr/share/doc/freecloud
 	install -m 0644 README.md debian/freecloud/usr/share/doc/freecloud/README.md

@@ -2399,7 +2399,7 @@ class FreeCloudUi:
     def show_about(self) -> None:
         messagebox.showinfo(
             "About FreeCloud",
-            "FreeCloud Sync\n\nYour hosting. Your cloud. Always in sync.",
+            f"FreeCloud Sync {cli.VERSION}\n\nYour hosting. Your cloud. Always in sync.",
         )
 
     def show_remote_item_menu(self, path: str, name: str, is_dir: bool) -> None:

@@ -1,0 +1,43 @@
+.TH FREECLOUD-CLI 1 "June 2026" "FreeCloud 2.1.0" "User Commands"
+.SH NAME
+freecloud-cli \- synchronize files with a self-hosted FreeCloud drive
+.SH SYNOPSIS
+.B freecloud-cli
+[\fIOPTION\fR]...
+.SH DESCRIPTION
+.B freecloud-cli
+runs the FreeCloud synchronization client in a terminal. If no saved
+configuration is available, it starts the first-time setup prompts.
+.SH OPTIONS
+.TP
+.B \-\-config \fIPATH\fR
+Use the specified FreeCloud client configuration file.
+.TP
+.B \-\-local \fIFOLDER\fR
+Use the specified local synchronization folder.
+.TP
+.B \-\-once
+Run one synchronization pass and exit.
+.TP
+.B \-\-interval \fISECONDS\fR
+Set the polling interval. The minimum is two seconds.
+.TP
+.B \-\-delete\-remote
+Propagate local deletions to the remote server.
+.TP
+.B \-\-version
+Display the FreeCloud version and exit.
+.TP
+.B \-h, \-\-help
+Display command help and exit.
+.SH FILES
+.TP
+.I ~/.config/freecloud/last_config.json
+Last-used configuration.
+.TP
+.I LOCAL_FOLDER/.freecloud_client.json
+Configuration for a synchronized local folder.
+.SH AUTHOR
+Kyle Benzle <kbe@gmx.us>
+.SH SEE ALSO
+.BR freecloud (1)

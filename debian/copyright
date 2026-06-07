@@ -17,7 +17,9 @@ License: GPL-3+
 
 Files: packaging/linux/io.github.kylebenzle.freecloud.metainfo.xml
 Copyright: 2026 Kyle Benzle <kbe@gmx.us>
-License: GPL-3+
+License: CC0-1.0
+ On Debian systems, the complete text of the Creative Commons CC0 1.0
+ Universal license can be found in "/usr/share/common-licenses/CC0-1.0".
 
 Files:
  android-app/gradlew

@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+# Package launcher for the FreeCloud command-line sync client.
+
+set -eu
+
+APP_DIR="/usr/share/freecloud"
+exec python3 "$APP_DIR/freecloud_cli.py" "$@"

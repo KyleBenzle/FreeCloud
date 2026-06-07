@@ -1,18 +1,25 @@
-# Python runtime files
 __pycache__/
 *.py[cod]
 
-# FreeCloud local runtime files from early development builds
-.freecloud_*.json
-.freecloud_*.log
-.freecloud_*.pid
+.freecloud_client.json
+.freecloud_state.json
+.freecloud_last_config.json
 
-# Android/Gradle build output
 android-app/.gradle/
 android-app/build/
 android-app/app/build/
 android-app/local.properties
-
-# Local signing credentials should not be committed.
 *.jks
 *.keystore
+
+dist/
+debian/.debhelper/
+debian/debhelper-build-stamp
+debian/files
+debian/freecloud/
+debian/*.debhelper
+debian/*.substvars
+*.buildinfo
+*.changes
+*.deb
+*.dsc
