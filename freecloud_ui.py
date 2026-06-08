@@ -1206,22 +1206,11 @@ class FreeCloudUi:
         browser_panes.grid(row=0, column=0, sticky="nsew")
 
         sidebar = tk.Frame(browser_panes, bg="#fbfdff", highlightthickness=0, bd=0)
-        sidebar.grid_rowconfigure(1, weight=1)
+        sidebar.grid_rowconfigure(0, weight=1)
         sidebar.grid_columnconfigure(0, weight=1)
 
-        tk.Label(
-            sidebar,
-            text="☁  FreeCloud",
-            bg="#fbfdff",
-            fg=COLORS["ink"],
-            anchor="w",
-            padx=14,
-            pady=12,
-            font=("TkDefaultFont", 11, "bold"),
-        ).grid(row=0, column=0, sticky="ew")
-
         tree_shell = tk.Frame(sidebar, bg="#fbfdff")
-        tree_shell.grid(row=1, column=0, sticky="nsew", padx=(6, 0))
+        tree_shell.grid(row=0, column=0, sticky="nsew", padx=(6, 0))
         tree_shell.grid_rowconfigure(0, weight=1)
         tree_shell.grid_columnconfigure(0, weight=1)
 
@@ -1258,7 +1247,7 @@ class FreeCloudUi:
         self.remote_tree.bind("<B1-Motion>", self.on_remote_tree_drag_motion)
         self.remote_tree.bind("<ButtonRelease-1>", self.on_remote_tree_button_release)
 
-        tk.Frame(sidebar, bg=COLORS["line"], height=1).grid(row=2, column=0, sticky="ew", padx=10)
+        tk.Frame(sidebar, bg=COLORS["line"], height=1).grid(row=1, column=0, sticky="ew", padx=10)
         tk.Label(
             sidebar,
             text="♲  Trash",
@@ -1268,10 +1257,10 @@ class FreeCloudUi:
             padx=14,
             pady=12,
             font=("TkDefaultFont", 10, "bold"),
-        ).grid(row=3, column=0, sticky="ew")
+        ).grid(row=2, column=0, sticky="ew")
 
         storage = tk.Frame(sidebar, bg="#fbfdff")
-        storage.grid(row=4, column=0, sticky="ew", padx=14, pady=(4, 14))
+        storage.grid(row=3, column=0, sticky="ew", padx=14, pady=(4, 14))
         storage.grid_columnconfigure(0, weight=1)
         tk.Label(
             storage,
