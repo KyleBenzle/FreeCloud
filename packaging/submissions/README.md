@@ -1,14 +1,14 @@
 # Debian and Ubuntu Submission
 
-FreeCloud's upstream release is `2.1.0`. Debian repacks generated binaries out
-of the source archive, so its first package version is `2.1.0+dfsg-1`.
+FreeCloud's upstream release is `2.1.1`. Debian repacks generated binaries out
+of the source archive, so its first package version is `2.1.1+dfsg-1`.
 
 ## 1. Publish the upstream release
 
 1. Commit the release files.
 2. Push the `main` branch to GitHub.
-3. Create and push the `v2.1.0` tag.
-4. Create a GitHub release named `FreeCloud 2.1.0`.
+3. Create and push the `v2.1.1` tag.
+4. Create a GitHub release named `FreeCloud 2.1.1`.
 
 Do not publish credentials, local configuration files, or signing keys.
 

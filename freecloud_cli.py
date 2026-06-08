@@ -34,7 +34,7 @@ APP_DIR = Path(__file__).resolve().parent / "server"
 LEGACY_LAST_CONFIG_PATH = Path(__file__).resolve().parent / ".freecloud_last_config.json"
 DEFAULT_INTERVAL = 10
 APP_NAME = "freecloud"
-VERSION = "2.1.0"
+VERSION = "2.1.1"
 
 
 def app_config_dir() -> Path:

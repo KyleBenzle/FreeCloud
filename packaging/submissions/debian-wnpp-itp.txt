@@ -7,7 +7,7 @@ Owner: Kyle Benzle <kbe@gmx.us>
 X-Debbugs-Cc: debian-devel@lists.debian.org
 
 * Package name    : freecloud
-  Version         : 2.1.0
+  Version         : 2.1.1
   Upstream Author : Kyle Benzle <kbe@gmx.us>
 * URL             : https://github.com/KyleBenzle/FreeCloud
 * License         : GPL-3+

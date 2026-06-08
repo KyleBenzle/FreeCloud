@@ -33,6 +33,14 @@
     <binary>freecloud</binary>
   </provides>
   <releases>
+    <release version="2.1.1" date="2026-06-08">
+      <description>
+        <p>
+          Adds tray window activation, adjustable persistent font sizing, and
+          navigation layout refinements.
+        </p>
+      </description>
+    </release>
     <release version="2.1.0" date="2026-06-07">
       <description>
         <p>Initial packaged Linux desktop release.</p>
