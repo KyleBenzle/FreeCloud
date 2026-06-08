@@ -33,6 +33,7 @@ PID_PATH = cli.STATE_DIR / "sync.pid"
 TRAY_PID_PATH = cli.STATE_DIR / "tray.pid"
 UI_PID_PATH = cli.STATE_DIR / "ui.pid"
 UI_OPEN_REQUEST_PATH = cli.STATE_DIR / "open-ui.request"
+UI_PREFERENCES_PATH = cli.CONFIG_DIR / "ui.json"
 BACKGROUND_LOG_PATH = cli.STATE_DIR / "sync.log"
 TRAY_LOG_PATH = cli.STATE_DIR / "tray.log"
 UI_ERROR_LOG_PATH = cli.STATE_DIR / "ui_error.log"
@@ -525,6 +526,7 @@ class FreeCloudUi:
         self.menu_bar: tk.Menu | None = None
         self.widget_font_overrides: dict[str, tkfont.Font] = {}
         self.style_font_overrides: dict[str, tkfont.Font] = {}
+        self.font_size_delta = self.load_font_size_delta()
 
         root.title("FreeCloud Sync")
         root.geometry("1280x800")
@@ -636,6 +638,8 @@ class FreeCloudUi:
             root.after(250, self.load_cached_files_after_startup)
         if has_saved_setup:
             root.after(3500, self.start_sync)
+        if self.font_size_delta:
+            self.apply_overall_font_size_step(self.font_size_delta)
         startup_log("FreeCloudUi init finished")
 
     def poll_open_ui_request(self) -> None:
@@ -812,6 +816,11 @@ class FreeCloudUi:
         self.adjust_overall_font_size(-1)
 
     def adjust_overall_font_size(self, step: int) -> None:
+        self.apply_overall_font_size_step(step)
+        self.font_size_delta += step
+        cli.save_json(UI_PREFERENCES_PATH, {"font_size_delta": self.font_size_delta})
+
+    def apply_overall_font_size_step(self, step: int) -> None:
         named_fonts = set(tkfont.names(self.root))
         for name in named_fonts:
             if not name.startswith("Tk"):
@@ -849,6 +858,14 @@ class FreeCloudUi:
         self.adjust_style_font("FreeCloud.Treeview", step, row_height=True)
         self.adjust_style_font("FreeCloud.Files.Treeview", step, row_height=True)
         self.adjust_style_font("FreeCloud.Files.Treeview.Heading", step)
+
+    @staticmethod
+    def load_font_size_delta() -> int:
+        value = load_json(UI_PREFERENCES_PATH).get("font_size_delta", 0)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
 
     def adjust_style_font(self, style_name: str, step: int, row_height: bool = False) -> None:
         style = ttk.Style(self.root)

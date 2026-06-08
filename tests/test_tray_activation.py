@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from freecloud_ui import FreeCloudUi, TrayMenuActivationTracker
 
@@ -38,6 +39,14 @@ class FontSizeTests(unittest.TestCase):
     def test_negative_pixel_font_size_preserves_direction(self) -> None:
         self.assertEqual(FreeCloudUi.adjusted_font_size(-10, 1), -11)
         self.assertEqual(FreeCloudUi.adjusted_font_size(-10, -1), -9)
+
+    def test_saved_font_size_is_restored(self) -> None:
+        with patch("freecloud_ui.load_json", return_value={"font_size_delta": "3"}):
+            self.assertEqual(FreeCloudUi.load_font_size_delta(), 3)
+
+    def test_invalid_saved_font_size_uses_default(self) -> None:
+        with patch("freecloud_ui.load_json", return_value={"font_size_delta": "large"}):
+            self.assertEqual(FreeCloudUi.load_font_size_delta(), 0)
 
 
 if __name__ == "__main__":
