@@ -1,6 +1,6 @@
 import unittest
 
-from freecloud_ui import TrayMenuActivationTracker
+from freecloud_ui import FreeCloudUi, TrayMenuActivationTracker
 
 
 class TrayMenuActivationTrackerTests(unittest.TestCase):
@@ -25,6 +25,19 @@ class TrayMenuActivationTrackerTests(unittest.TestCase):
         tracker.menu_action_started()
 
         self.assertFalse(tracker.menu_closed(10.2))
+
+
+class FontSizeTests(unittest.TestCase):
+    def test_positive_font_size_changes_one_point(self) -> None:
+        self.assertEqual(FreeCloudUi.adjusted_font_size(10, 1), 11)
+        self.assertEqual(FreeCloudUi.adjusted_font_size(10, -1), 9)
+
+    def test_font_size_does_not_drop_below_minimum(self) -> None:
+        self.assertEqual(FreeCloudUi.adjusted_font_size(6, -1), 6)
+
+    def test_negative_pixel_font_size_preserves_direction(self) -> None:
+        self.assertEqual(FreeCloudUi.adjusted_font_size(-10, 1), -11)
+        self.assertEqual(FreeCloudUi.adjusted_font_size(-10, -1), -9)
 
 
 if __name__ == "__main__":

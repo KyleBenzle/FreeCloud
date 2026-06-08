@@ -14,6 +14,7 @@ import threading
 import time
 import traceback
 import tkinter as tk
+import tkinter.font as tkfont
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -374,6 +375,7 @@ class SoftButton(tk.Canvas):
         self.text = text
         self.textvariable = textvariable
         self.font_size = font_size
+        self.font_size_delta = 0
         self._trace_id: str | None = None
         self._hovering = False
 
@@ -470,11 +472,33 @@ class SoftButton(tk.Canvas):
         )
         lines = self.text.split("\n", 1)
         if len(lines) == 2:
-            self.create_text(width // 2, height // 2 - 10, text=lines[0], fill=text_color, font=("TkDefaultFont", 21, "bold"))
-            self.create_text(width // 2, height // 2 + 18, text=lines[1], fill=text_color, font=("TkDefaultFont", 9, "bold"))
+            self.create_text(
+                width // 2,
+                height // 2 - 10,
+                text=lines[0],
+                fill=text_color,
+                font=("TkDefaultFont", max(6, 21 + self.font_size_delta), "bold"),
+            )
+            self.create_text(
+                width // 2,
+                height // 2 + 18,
+                text=lines[1],
+                fill=text_color,
+                font=("TkDefaultFont", max(6, 9 + self.font_size_delta), "bold"),
+            )
         else:
             font_size = self.font_size or (21 if len(self.text) <= 2 and height >= 36 else 10)
-            self.create_text(width // 2, height // 2, text=self.text, fill=text_color, font=("TkDefaultFont", font_size, "bold"))
+            self.create_text(
+                width // 2,
+                height // 2,
+                text=self.text,
+                fill=text_color,
+                font=("TkDefaultFont", max(6, font_size + self.font_size_delta), "bold"),
+            )
+
+    def adjust_font_size(self, step: int) -> None:
+        self.font_size_delta += step
+        self.redraw()
 
     def rounded_points(self, x1: int, y1: int, x2: int, y2: int, r: int) -> list[int]:
         return [
@@ -498,6 +522,9 @@ class FreeCloudUi:
         self.output_queue: queue.Queue[str | None] = queue.Queue()
         self.logo_image: tk.PhotoImage | None = None
         self.icon_image: tk.PhotoImage | None = None
+        self.menu_bar: tk.Menu | None = None
+        self.widget_font_overrides: dict[str, tkfont.Font] = {}
+        self.style_font_overrides: dict[str, tkfont.Font] = {}
 
         root.title("FreeCloud Sync")
         root.geometry("1280x800")
@@ -751,6 +778,9 @@ class FreeCloudUi:
         edit_menu = tk.Menu(menu_bar, **menu_options)
         edit_menu.add_command(label="Edit Settings", command=self.edit_settings)
         edit_menu.add_separator()
+        edit_menu.add_command(label="Increase Font Size ++", command=self.increase_font_size)
+        edit_menu.add_command(label="Decrease Font Size --", command=self.decrease_font_size)
+        edit_menu.add_separator()
         edit_menu.add_command(label="New Folder", command=self.create_remote_folder)
         edit_menu.add_command(label="Upload", command=self.upload_remote_files)
         edit_menu.add_command(label="Refresh", command=self.refresh_files)
@@ -766,7 +796,74 @@ class FreeCloudUi:
         help_menu.add_command(label="About FreeCloud", command=self.show_about)
         menu_bar.add_cascade(label="Help", menu=help_menu)
 
+        self.menu_bar = menu_bar
         self.root.config(menu=menu_bar)
+
+    @staticmethod
+    def adjusted_font_size(size: int, step: int) -> int:
+        if size < 0:
+            return min(-6, size - step)
+        return max(6, size + step)
+
+    def increase_font_size(self) -> None:
+        self.adjust_overall_font_size(1)
+
+    def decrease_font_size(self) -> None:
+        self.adjust_overall_font_size(-1)
+
+    def adjust_overall_font_size(self, step: int) -> None:
+        named_fonts = set(tkfont.names(self.root))
+        for name in named_fonts:
+            if not name.startswith("Tk"):
+                continue
+            font = tkfont.nametofont(name, root=self.root)
+            font.configure(size=self.adjusted_font_size(int(font.cget("size")), step))
+
+        pending: list[tk.Misc] = [self.root]
+        if self.menu_bar is not None:
+            pending.append(self.menu_bar)
+        seen: set[str] = set()
+        while pending:
+            widget = pending.pop()
+            widget_key = str(widget)
+            if widget_key in seen:
+                continue
+            seen.add(widget_key)
+            pending.extend(widget.winfo_children())
+            if isinstance(widget, SoftButton):
+                widget.adjust_font_size(step)
+                continue
+            try:
+                font_spec = str(widget.cget("font"))
+            except (tk.TclError, AttributeError):
+                continue
+            if not font_spec or font_spec in named_fonts:
+                continue
+            font = self.widget_font_overrides.get(widget_key)
+            if font is None:
+                font = tkfont.Font(root=self.root, font=font_spec)
+                self.widget_font_overrides[widget_key] = font
+                widget.configure(font=font)
+            font.configure(size=self.adjusted_font_size(int(font.cget("size")), step))
+
+        self.adjust_style_font("FreeCloud.Treeview", step, row_height=True)
+        self.adjust_style_font("FreeCloud.Files.Treeview", step, row_height=True)
+        self.adjust_style_font("FreeCloud.Files.Treeview.Heading", step)
+
+    def adjust_style_font(self, style_name: str, step: int, row_height: bool = False) -> None:
+        style = ttk.Style(self.root)
+        font = self.style_font_overrides.get(style_name)
+        if font is None:
+            font_spec = style.lookup(style_name, "font")
+            if not font_spec:
+                return
+            font = tkfont.Font(root=self.root, font=font_spec)
+            self.style_font_overrides[style_name] = font
+            style.configure(style_name, font=font)
+        font.configure(size=self.adjusted_font_size(int(font.cget("size")), step))
+        if row_height:
+            current_height = int(style.lookup(style_name, "rowheight") or 20)
+            style.configure(style_name, rowheight=max(20, current_height + step))
 
     def startup_enabled(self) -> bool:
         if sys.platform.startswith("linux"):
