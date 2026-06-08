@@ -30,6 +30,8 @@ LAST_CONFIG_PATH = cli.LAST_CONFIG_PATH
 LEGACY_LAST_CONFIG_PATH = cli.LEGACY_LAST_CONFIG_PATH
 PID_PATH = cli.STATE_DIR / "sync.pid"
 TRAY_PID_PATH = cli.STATE_DIR / "tray.pid"
+UI_PID_PATH = cli.STATE_DIR / "ui.pid"
+UI_OPEN_REQUEST_PATH = cli.STATE_DIR / "open-ui.request"
 BACKGROUND_LOG_PATH = cli.STATE_DIR / "sync.log"
 TRAY_LOG_PATH = cli.STATE_DIR / "tray.log"
 UI_ERROR_LOG_PATH = cli.STATE_DIR / "ui_error.log"
@@ -71,6 +73,31 @@ COLORS = {
 
 STARTUP_STARTED_AT = time.perf_counter()
 MAIN_SCROLLBAR_OVERFLOW_TOLERANCE = 8
+
+
+class TrayMenuActivationTracker:
+    def __init__(self, double_click_seconds: float = 0.6) -> None:
+        self.double_click_seconds = double_click_seconds
+        self.opened_at: float | None = None
+        self.menu_action_selected = False
+
+    def menu_opened(self, opened_at: float) -> None:
+        self.opened_at = opened_at
+        self.menu_action_selected = False
+
+    def menu_action_started(self) -> None:
+        self.menu_action_selected = True
+
+    def menu_closed(self, closed_at: float) -> bool:
+        opened_at = self.opened_at
+        should_open = (
+            opened_at is not None
+            and not self.menu_action_selected
+            and 0 <= closed_at - opened_at <= self.double_click_seconds
+        )
+        self.opened_at = None
+        self.menu_action_selected = False
+        return should_open
 
 
 def startup_log(message: str) -> None:
@@ -204,6 +231,25 @@ def stop_tray_indicator() -> None:
         TRAY_PID_PATH.unlink()
     except FileNotFoundError:
         pass
+
+
+def request_existing_ui() -> bool:
+    try:
+        pid = int(UI_PID_PATH.read_text(encoding="utf-8").strip())
+    except (FileNotFoundError, ValueError):
+        return False
+    if not process_is_running(pid):
+        try:
+            UI_PID_PATH.unlink()
+        except FileNotFoundError:
+            pass
+        return False
+    try:
+        UI_OPEN_REQUEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+        UI_OPEN_REQUEST_PATH.write_text(str(time.time()), encoding="utf-8")
+    except OSError:
+        return False
+    return True
 
 
 def saved_config_data() -> dict[str, object]:
@@ -552,6 +598,7 @@ class FreeCloudUi:
         startup_log("output/summary built")
 
         root.protocol("WM_DELETE_WINDOW", self.on_close)
+        root.after(200, self.poll_open_ui_request)
         root.after(150, self.drain_output)
         root.after(500, launch_tray_indicator)
         root.after(1200, self.refresh_startup_entry_if_enabled)
@@ -563,6 +610,18 @@ class FreeCloudUi:
         if has_saved_setup:
             root.after(3500, self.start_sync)
         startup_log("FreeCloudUi init finished")
+
+    def poll_open_ui_request(self) -> None:
+        if UI_OPEN_REQUEST_PATH.exists():
+            try:
+                UI_OPEN_REQUEST_PATH.unlink()
+            except OSError:
+                pass
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+        if self.root.winfo_exists():
+            self.root.after(200, self.poll_open_ui_request)
 
     def on_frame_configure(self, _event: tk.Event[tk.Misc]) -> None:
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
@@ -3010,6 +3069,7 @@ def run_tray_indicator() -> int:
     menu.append(open_item)
     menu.append(stop_item)
     menu.append(quit_item)
+    menu_activation = TrayMenuActivationTracker()
 
     def refresh_status() -> bool:
         running = tray_background_running()
@@ -3018,6 +3078,9 @@ def run_tray_indicator() -> int:
         return True
 
     def open_ui(_item: object) -> None:
+        menu_activation.menu_action_started()
+        if request_existing_ui():
+            return
         subprocess.Popen(
             [sys.executable, str(Path(__file__).resolve())],
             cwd=str(BASE_DIR),
@@ -3028,18 +3091,37 @@ def run_tray_indicator() -> int:
         )
 
     def stop_sync(_item: object) -> None:
+        menu_activation.menu_action_started()
         tray_stop_background_sync()
         refresh_status()
 
     def quit_freecloud(_item: object) -> None:
+        menu_activation.menu_action_started()
         tray_stop_background_sync()
         Gtk.main_quit()
+
+    def menu_opened(_menu: object) -> None:
+        menu_activation.menu_opened(time.monotonic())
+
+    def menu_closed(_menu: object) -> None:
+        closed_at = time.monotonic()
+
+        def finish_menu_close() -> bool:
+            if menu_activation.menu_closed(closed_at):
+                open_ui(None)
+            return False
+
+        GLib.idle_add(finish_menu_close)
 
     open_item.connect("activate", open_ui)
     stop_item.connect("activate", stop_sync)
     quit_item.connect("activate", quit_freecloud)
+    menu.connect("map", menu_opened)
+    menu.connect("deactivate", menu_closed)
     menu.show_all()
     indicator.set_menu(menu)
+    if hasattr(indicator, "set_secondary_activate_target"):
+        indicator.set_secondary_activate_target(open_item)
     refresh_status()
     GLib.timeout_add_seconds(5, refresh_status)
 
@@ -3058,8 +3140,16 @@ def main() -> int:
         return run_tray_indicator()
     if "--background" in sys.argv[1:]:
         return run_background_startup()
+    if request_existing_ui():
+        return 0
 
     try:
+        UI_PID_PATH.parent.mkdir(parents=True, exist_ok=True)
+        UI_PID_PATH.write_text(str(os.getpid()), encoding="utf-8")
+        try:
+            UI_OPEN_REQUEST_PATH.unlink()
+        except FileNotFoundError:
+            pass
         root = tk.Tk()
         FreeCloudUi(root)
         root.mainloop()
@@ -3071,6 +3161,12 @@ def main() -> int:
         except OSError:
             pass
         raise
+    finally:
+        try:
+            if UI_PID_PATH.read_text(encoding="utf-8").strip() == str(os.getpid()):
+                UI_PID_PATH.unlink()
+        except (FileNotFoundError, OSError):
+            pass
 
 
 if __name__ == "__main__":
