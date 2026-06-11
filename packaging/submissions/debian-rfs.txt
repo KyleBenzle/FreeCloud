@@ -1,0 +1,37 @@
+Package: sponsorship-requests
+Severity: wishlist
+
+Dear mentors,
+
+I am looking for a sponsor for my package "freecloud":
+
+ * Package name     : freecloud
+   Version          : 2.1.1+dfsg2-1
+   Upstream contact : Kyle Benzle <kbe@gmx.us>
+ * URL              : https://freecloud.wiki
+ * License          : GPL-3+, CC0-1.0, Apache-2.0
+ * Vcs              : https://github.com/KyleBenzle/FreeCloud
+   Section          : net
+
+The source builds the following binary package:
+
+  freecloud - personal cloud drive using existing web hosting
+
+The package is available on Debian Mentors:
+
+  https://mentors.debian.net/package/freecloud/
+
+It can be downloaded with:
+
+  dget -x https://mentors.debian.net/debian/pool/main/f/freecloud/freecloud_2.1.1+dfsg2-1.dsc
+
+Changes for the initial release:
+
+ freecloud (2.1.1+dfsg2-1) unstable; urgency=medium
+ .
+   * Initial Debian release. (Closes: #1139338)
+   * Exclude generated Android build output from the repacked source.
+   * Update Standards-Version to 4.7.4.
+
+Regards,
+Kyle Benzle
