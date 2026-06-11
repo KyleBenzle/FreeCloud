@@ -4,8 +4,12 @@ Upstream-Contact: Kyle Benzle <kbe@gmx.us>
 Source: https://github.com/KyleBenzle/FreeCloud
 Files-Excluded:
  __pycache__/*
+ android-app/.gradle/*
+ android-app/build/*
+ android-app/app/build/*
  android-app/app/release/*
  android-app/gradle/wrapper/gradle-wrapper.jar
+ freecloud_keystore.jks
  website/FreeCloud.zip
 Comment:
  Generated binaries and archives that are not used by the Debian desktop

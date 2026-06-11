@@ -5,7 +5,7 @@ Maintainer: Kyle Benzle <kbe@gmx.us>
 Build-Depends:
  debhelper-compat (= 13),
  dh-sequence-python3,
-Standards-Version: 4.7.2
+Standards-Version: 4.7.4
 Rules-Requires-Root: no
 Homepage: https://freecloud.wiki
 Vcs-Browser: https://github.com/KyleBenzle/FreeCloud

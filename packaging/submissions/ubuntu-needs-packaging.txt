@@ -25,7 +25,7 @@ Upstream contact:
 Kyle Benzle <kbe@gmx.us>
 
 Debian WNPP bug:
-ADD THE DEBIAN BUG URL HERE AFTER SUBMITTING THE ITP
+https://bugs.debian.org/1139338
 
 Packaging status:
 Initial Debian packaging is maintained in the upstream repository under
