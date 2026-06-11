@@ -27,6 +27,12 @@ Kyle Benzle <kbe@gmx.us>
 Debian WNPP bug:
 https://bugs.debian.org/1139338
 
+Debian sponsorship request:
+https://bugs.debian.org/1139673
+
+Debian Mentors package:
+https://mentors.debian.net/package/freecloud/
+
 Packaging status:
 Initial Debian packaging is maintained in the upstream repository under
 debian/. The preferred path is acceptance into Debian followed by automatic
