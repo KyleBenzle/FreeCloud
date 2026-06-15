@@ -6,7 +6,15 @@ $sessionDir = $baseDir . '/freecloud_sessions';
 if (!is_dir($sessionDir)) {
     mkdir($sessionDir, 0775, true);
 }
+if (!is_file($sessionDir . '/.htaccess')) {
+    @file_put_contents($sessionDir . '/.htaccess', "Require all denied\nDeny from all\n", LOCK_EX);
+}
 session_save_path($sessionDir);
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Strict');
+if (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
+    ini_set('session.cookie_secure', '1');
+}
 session_start();
 
 $storageRoot = $baseDir . '/freecloud_files';
@@ -43,7 +51,11 @@ function saveConfig(string $configFile, string $name, string $password): bool
         'created_at' => time(),
     ];
 
-    return file_put_contents($configFile, json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX) !== false;
+    $saved = file_put_contents($configFile, json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX) !== false;
+    if ($saved) {
+        @chmod($configFile, 0600);
+    }
+    return $saved;
 }
 
 function authRequired(?array $config): bool
@@ -295,6 +307,23 @@ function deletePathRecursively(string $path): bool
 function h(string $value): string
 {
     return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+}
+
+function csrfToken(): string
+{
+    if (!isset($_SESSION['csrf_token']) || !is_string($_SESSION['csrf_token'])) {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    }
+    return $_SESSION['csrf_token'];
+}
+
+function requireCsrfToken(): void
+{
+    $submitted = (string) ($_POST['csrf_token'] ?? '');
+    if ($submitted === '' || !hash_equals(csrfToken(), $submitted)) {
+        http_response_code(403);
+        exit('Invalid request token. Reload the page and try again.');
+    }
 }
 
 function resolveAssetUrl(string $filename): ?string
@@ -782,13 +811,21 @@ $loginError = '';
 $logoUrl = resolveAssetUrl('logo.png');
 $iconUrl  = resolveAssetUrl('icon.png') ?? resolveAssetUrl('favicon.ico');
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    requireCsrfToken();
+}
+
 if ($config === null && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'setup') {
-    if (saveConfig($configFile, (string) ($_POST['drive_name'] ?? 'FreeCloud'), (string) ($_POST['password'] ?? ''))) {
+    $setupPassword = (string) ($_POST['password'] ?? '');
+    if (strlen($setupPassword) < 8) {
+        $setupError = 'Use a password with at least 8 characters.';
+    } elseif (saveConfig($configFile, (string) ($_POST['drive_name'] ?? 'FreeCloud'), $setupPassword)) {
         session_regenerate_id(true);
         $_SESSION['auth'] = true;
         redirectToDrive('', 'FreeCloud is ready.');
+    } else {
+        $setupError = 'Could not save config.json. Check folder permissions.';
     }
-    $setupError = 'Could not save config.json. Check folder permissions.';
 }
 
 if ($config !== null && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'login') {
@@ -796,12 +833,17 @@ if ($config !== null && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action
     if (password_verify($password, (string) ($config['password_hash'] ?? ''))) {
         session_regenerate_id(true);
         $_SESSION['auth'] = true;
+        unset($_SESSION['login_failures']);
         redirectToDrive();
+    }
+    $_SESSION['login_failures'] = min(10, (int) ($_SESSION['login_failures'] ?? 0) + 1);
+    if ((int) $_SESSION['login_failures'] >= 5) {
+        sleep(1);
     }
     $loginError = 'Incorrect password.';
 }
 
-if ($config !== null && ($_GET['action'] ?? '') === 'logout') {
+if ($config !== null && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'logout') {
     $_SESSION = [];
     if (ini_get('session.use_cookies')) {
         $params = session_get_cookie_params();
@@ -835,6 +877,7 @@ if ($config !== null && !isAuthed($config)) {
         <?php if ($loginError !== ''): ?><div class="auth-error"><?= h($loginError) ?></div><?php endif; ?>
         <form method="post">
             <input type="hidden" name="action" value="login">
+            <input type="hidden" name="csrf_token" value="<?= h(csrfToken()) ?>">
             <div class="field">
                 <label for="pw">Password</label>
                 <input class="input" id="pw" type="password" name="password" autocomplete="current-password" autofocus>
@@ -867,17 +910,18 @@ if ($config === null) {
             <img src="<?= h($logoUrl) ?>" alt="FreeCloud" class="auth-logo">
         <?php endif; ?>
         <h1>Set up FreeCloud</h1>
-        <p class="note">Give your drive a name and an optional password. You can skip the password if the URL is already private.</p>
+        <p class="note">Give your drive a name and use a password with at least 8 characters.</p>
         <?php if ($setupError !== ''): ?><div class="auth-error"><?= h($setupError) ?></div><?php endif; ?>
         <form method="post">
             <input type="hidden" name="action" value="setup">
+            <input type="hidden" name="csrf_token" value="<?= h(csrfToken()) ?>">
             <div class="field">
                 <label for="drive_name">Drive name</label>
                 <input class="input" id="drive_name" type="text" name="drive_name" value="FreeCloud" required>
             </div>
             <div class="field">
-                <label for="pw">Password <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
-                <input class="input" id="pw" type="password" name="password" autocomplete="new-password">
+                <label for="pw">Password</label>
+                <input class="input" id="pw" type="password" name="password" minlength="8" autocomplete="new-password" required>
             </div>
             <button class="button primary auth-submit" type="submit">Create Drive</button>
         </form>
@@ -1045,7 +1089,11 @@ if ($parentPath === '.') {
         </div>
         <div class="top-actions">
             <?php if (authRequired($config)): ?>
-                <a class="button-link" href="freecloud.php?action=logout">Log Out</a>
+                <form method="post">
+                    <input type="hidden" name="action" value="logout">
+                    <input type="hidden" name="csrf_token" value="<?= h(csrfToken()) ?>">
+                    <button class="button" type="submit">Log Out</button>
+                </form>
             <?php endif; ?>
         </div>
     </header>
@@ -1056,6 +1104,7 @@ if ($parentPath === '.') {
 
     <section class="panel">
         <form class="upload" id="upload-zone" method="post" enctype="multipart/form-data">
+            <input type="hidden" name="csrf_token" value="<?= h(csrfToken()) ?>">
             <input type="hidden" name="current_path" value="<?= h($currentPath) ?>">
             <input type="hidden" name="sort" value="<?= h($sort) ?>">
             <span class="upload-cloud">&#9729;</span>
@@ -1150,6 +1199,7 @@ if ($parentPath === '.') {
                             <a class="button-link" href="freecloud_download.php?path=<?= rawurlencode($entry['path']) ?>">Download</a>
                             <form method="post">
                                 <input type="hidden" name="action" value="delete">
+                                <input type="hidden" name="csrf_token" value="<?= h(csrfToken()) ?>">
                                 <input type="hidden" name="current_path" value="<?= h($currentPath) ?>">
                                 <input type="hidden" name="target_path" value="<?= h($entry['path']) ?>">
                                 <input type="hidden" name="sort" value="<?= h($sort) ?>">
@@ -1190,6 +1240,7 @@ if ($parentPath === '.') {
 <script>
 const currentPath = <?= json_encode($currentPath, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
 const currentSort = <?= json_encode($sort) ?>;
+const csrfToken = <?= json_encode(csrfToken()) ?>;
 const zone = document.getElementById('upload-zone');
 const statusEl = document.getElementById('upload-status');
 const progressEl = document.getElementById('upload-progress');
@@ -1221,6 +1272,7 @@ function uploadFile(file) {
         const bar = uploadRow(relativePath || file.name);
         formData.append('current_path', currentPath);
         formData.append('sort', currentSort);
+        formData.append('csrf_token', csrfToken);
         formData.append('files[]', file, file.name);
         formData.append('relative_paths[]', relativePath || file.name);
         xhr.open('POST', 'freecloud.php');
@@ -1377,7 +1429,7 @@ editorSave.addEventListener('click', async () => {
         const response = await fetch('freecloud.php', {
             method: 'POST',
             headers: {'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'},
-            body: new URLSearchParams({action: 'save_file', target_path: editorPath, content: editorTextarea.value})
+            body: new URLSearchParams({action: 'save_file', csrf_token: csrfToken, target_path: editorPath, content: editorTextarea.value})
         });
         const data = await response.json();
         if (!response.ok) {

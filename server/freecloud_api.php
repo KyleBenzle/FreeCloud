@@ -9,6 +9,7 @@ function jsonResponse(array $data, int $status = 200): never
 {
     http_response_code($status);
     header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
     header('X-Content-Type-Options: nosniff');
     echo json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     exit;
@@ -45,7 +46,11 @@ function saveConfig(string $configFile, string $name, string $password): bool
         'created_at' => time(),
     ];
 
-    return file_put_contents($configFile, json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX) !== false;
+    $saved = file_put_contents($configFile, json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX) !== false;
+    if ($saved) {
+        @chmod($configFile, 0600);
+    }
+    return $saved;
 }
 
 function headerValue(string $name): string
@@ -341,6 +346,9 @@ if ($action === 'setup') {
 
     $name = (string) ($_POST['name'] ?? 'FreeCloud');
     $password = (string) ($_POST['password'] ?? '');
+    if (strlen($password) < 8) {
+        jsonResponse(['ok' => false, 'error' => 'Use a password with at least 8 characters.'], 400);
+    }
     if (!saveConfig($configFile, $name, $password)) {
         jsonResponse(['ok' => false, 'error' => 'Could not save config.json.'], 500);
     }

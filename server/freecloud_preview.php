@@ -6,7 +6,15 @@ $sessionDir = $baseDir . '/freecloud_sessions';
 if (!is_dir($sessionDir)) {
     mkdir($sessionDir, 0775, true);
 }
+if (!is_file($sessionDir . '/.htaccess')) {
+    @file_put_contents($sessionDir . '/.htaccess', "Require all denied\nDeny from all\n", LOCK_EX);
+}
 session_save_path($sessionDir);
+ini_set('session.cookie_httponly', '1');
+ini_set('session.cookie_samesite', 'Strict');
+if (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
+    ini_set('session.cookie_secure', '1');
+}
 session_start();
 
 $storageRoot = realpath($baseDir . '/freecloud_files');
