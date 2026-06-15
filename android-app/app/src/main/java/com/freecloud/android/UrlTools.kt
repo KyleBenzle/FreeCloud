@@ -9,6 +9,8 @@ object UrlTools {
         if (!domain.startsWith("http://") && !domain.startsWith("https://")) {
             domain = "https://$domain"
         }
+        val uri = URI(domain)
+        require(uri.scheme == "https") { "FreeCloud requires HTTPS." }
         return domain.removeSuffix("/")
     }
 

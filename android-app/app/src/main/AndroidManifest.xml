@@ -8,12 +8,13 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@drawable/freecloud_icon"
         android:label="@string/app_name"
         android:roundIcon="@drawable/freecloud_icon"
         android:supportsRtl="true"
-        android:theme="@style/Theme.FreeCloud">
+        android:theme="@style/Theme.FreeCloud"
+        android:usesCleartextTraffic="false">
 
         <activity
             android:name=".MainActivity"

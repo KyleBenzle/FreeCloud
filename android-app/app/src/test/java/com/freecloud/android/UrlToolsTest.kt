@@ -31,4 +31,9 @@ class UrlToolsTest {
     fun normalizeDriveNameRejectsNestedPaths() {
         UrlTools.normalizeDriveName("parent/child")
     }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun normalizeDomainRejectsRemotePlainHttp() {
+        UrlTools.normalizeDomain("http://example.com")
+    }
 }
