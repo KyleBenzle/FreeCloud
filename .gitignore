@@ -4,6 +4,12 @@ __pycache__/
 .freecloud_client.json
 .freecloud_state.json
 .freecloud_last_config.json
+freecloud_background.log
+freecloud_sync.pid
+
+server/config.json
+server/freecloud_files/
+server/freecloud_sessions/
 
 android-app/.gradle/
 android-app/build/

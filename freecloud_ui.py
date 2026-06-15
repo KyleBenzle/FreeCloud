@@ -2768,7 +2768,7 @@ class FreeCloudUi:
                 domain = website_address
                 base_url = f"{domain}/{urllib.parse.quote(drive_name)}"
             local_root = Path(self.local_var.get()).expanduser().resolve()
-            password = self.password_var.get()
+            password = cli.validate_password(self.password_var.get())
             client = cli.FreeCloudClient(base_url, password)
             try:
                 ping = client.ping()
@@ -2809,8 +2809,7 @@ class FreeCloudUi:
             self.append(f"Saved setup for {client.base_url}\n")
             self.append(f"Local folder: {local_root}\n")
 
-            cli.save_json(cli.config_path(local_root), config)
-            cli.save_json(cli.LAST_CONFIG_PATH, config)
+            cli.save_config(config)
             self.update_summary_text(config)
             self.editing_settings = False
             self.refresh_setup_visibility()

@@ -4,7 +4,7 @@ FreeCloud Linux CLI.
 
 First version goals:
 - prompt for a domain, remote drive folder, local folder, password, and setup method
-- optionally upload the FreeCloud web app over FTP
+- optionally upload the FreeCloud web app over encrypted FTPS
 - initialize the remote app if needed
 - keep local and remote files in sync by polling
 
@@ -35,6 +35,16 @@ LEGACY_LAST_CONFIG_PATH = Path(__file__).resolve().parent / ".freecloud_last_con
 DEFAULT_INTERVAL = 10
 APP_NAME = "freecloud"
 VERSION = "2.1.1"
+PROTECTED_NAMES = {
+    ".freecloud_client.json",
+    ".freecloud_last_config.json",
+    ".freecloud_state.json",
+    "freecloud_background.log",
+    "freecloud_sync.pid",
+}
+PROTECTED_DIR_NAMES = {".git", "__pycache__"}
+PROTECTED_SERVER_DIR_NAMES = {"freecloud_files", "freecloud_sessions"}
+PROTECTED_SERVER_FILES = {"config.json"}
 
 
 def app_config_dir() -> Path:
@@ -83,6 +93,9 @@ def normalize_domain(value: str) -> str:
         raise ValueError("Domain is required.")
     if not value.startswith(("http://", "https://")):
         value = "https://" + value
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme == "http" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+        raise ValueError("FreeCloud requires HTTPS. Plain HTTP is allowed only for local development.")
     return value.rstrip("/")
 
 
@@ -95,6 +108,12 @@ def normalize_drive_name(value: str) -> str:
     if len(parts) != 1:
         raise ValueError("Use one public_html folder name, like FreeCloud.")
     return parts[0]
+
+
+def validate_password(value: str) -> str:
+    if len(value) < 8:
+        raise ValueError("Use a FreeCloud password with at least 8 characters.")
+    return value
 
 
 def remote_path(path: str) -> str:
@@ -115,7 +134,7 @@ def remote_path(path: str) -> str:
 
 class FreeCloudClient:
     def __init__(self, base_url: str, password: str) -> None:
-        self.base_url = base_url.rstrip("/")
+        self.base_url = normalize_domain(base_url)
         self.password = password
 
     def remember_final_url(self, final_url: str) -> None:
@@ -185,7 +204,7 @@ class FreeCloudClient:
         return self.request("setup", data=data, method="POST", content_type="application/x-www-form-urlencoded")
 
     def manifest(self) -> list[dict[str, Any]]:
-        data = self.request("manifest")
+        data = self.request("manifest", {"_": time.time_ns()})
         return list(data.get("entries", []))
 
     def list(self, path: str = "") -> list[dict[str, Any]]:
@@ -247,32 +266,101 @@ def load_json(path: Path, fallback: Any) -> Any:
 
 
 def save_json(path: Path, data: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        path.parent.chmod(0o700)
+    except OSError:
+        pass
+
+    temp_path = path.with_name(path.name + ".tmp")
+    temp_path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+    try:
+        temp_path.chmod(0o600)
+    except OSError:
+        pass
+    os.replace(temp_path, path)
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+
+
+def save_config(config: dict[str, Any]) -> None:
+    save_json(LAST_CONFIG_PATH, config)
+    local_root_value = config.get("local_root")
+    legacy_paths = [LEGACY_LAST_CONFIG_PATH]
+    if local_root_value:
+        legacy_paths.append(config_path(Path(str(local_root_value)).expanduser()))
+    for path in legacy_paths:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def is_protected_path(path: str) -> bool:
+    parts = tuple(part for part in path.replace("\\", "/").split("/") if part)
+    if not parts:
+        return False
+    if any(part in PROTECTED_DIR_NAMES for part in parts):
+        return True
+    if parts[0] in PROTECTED_NAMES:
+        return True
+    return (
+        len(parts) >= 2
+        and parts[0] == "server"
+        and (parts[1] in PROTECTED_SERVER_DIR_NAMES or parts[1] in PROTECTED_SERVER_FILES)
+    )
 
 
 def local_manifest(local_root: Path) -> dict[str, dict[str, Any]]:
     entries: dict[str, dict[str, Any]] = {}
-    ignored = {".freecloud_client.json", ".freecloud_state.json"}
-    for path in local_root.rglob("*"):
-        if any(part in ignored for part in path.relative_to(local_root).parts):
-            continue
-        rel = path.relative_to(local_root).as_posix()
-        try:
-            stat = path.stat()
-        except FileNotFoundError:
-            continue
-        entries[rel] = {
-            "path": rel,
-            "type": "dir" if path.is_dir() else "file",
-            "size": 0 if path.is_dir() else stat.st_size,
-            "mtime": int(stat.st_mtime),
-        }
+    for current_root, dir_names, file_names in os.walk(local_root, followlinks=False):
+        current = Path(current_root)
+
+        kept_dirs = []
+        for name in dir_names:
+            path = current / name
+            rel = path.relative_to(local_root).as_posix()
+            if is_protected_path(rel) or path.is_symlink():
+                continue
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                continue
+            entries[rel] = {
+                "path": rel,
+                "type": "dir",
+                "size": 0,
+                "mtime": int(stat.st_mtime),
+            }
+            kept_dirs.append(name)
+        dir_names[:] = kept_dirs
+
+        for name in file_names:
+            path = current / name
+            rel = path.relative_to(local_root).as_posix()
+            if is_protected_path(rel) or path.is_symlink():
+                continue
+            try:
+                stat = path.stat()
+            except FileNotFoundError:
+                continue
+            entries[rel] = {
+                "path": rel,
+                "type": "file",
+                "size": stat.st_size,
+                "mtime": int(stat.st_mtime),
+            }
     return entries
 
 
 def remote_manifest(client: FreeCloudClient) -> dict[str, dict[str, Any]]:
-    return {entry["path"]: entry for entry in client.manifest() if entry.get("path")}
+    return {
+        entry["path"]: entry
+        for entry in client.manifest()
+        if entry.get("path") and not is_protected_path(str(entry["path"]))
+    }
 
 
 def roughly_equal(a: dict[str, Any], b: dict[str, Any]) -> bool:
@@ -285,7 +373,14 @@ def roughly_equal(a: dict[str, Any], b: dict[str, Any]) -> bool:
 
 def sync_once(client: FreeCloudClient, local_root: Path, delete_remote: bool = False) -> dict[str, int]:
     local_root.mkdir(parents=True, exist_ok=True)
-    previous = load_json(state_path(local_root), {})
+    saved_state = load_json(state_path(local_root), {})
+    if not isinstance(saved_state, dict):
+        saved_state = {}
+    previous = {
+        path: entry
+        for path, entry in saved_state.items()
+        if not is_protected_path(path)
+    }
     local = local_manifest(local_root)
     remote = remote_manifest(client)
     all_paths = sorted(set(local) | set(remote) | set(previous))
@@ -425,19 +520,20 @@ def run_setup() -> dict[str, Any]:
     domain = normalize_domain(prompt("Domain", "https://www.example.com"))
     drive_name = normalize_drive_name(prompt("Cloud drive folder name", "FreeCloud"))
     local_root = Path(prompt("Local folder to sync", str(Path.home() / drive_name))).expanduser().resolve()
-    password = prompt("FreeCloud password", secret=True)
-    setup_method = prompt("Setup method: manual or ftp", "manual").lower()
+    password = validate_password(prompt("FreeCloud password", secret=True))
+    setup_method = prompt("Setup method: manual or ftps", "manual").lower()
     base_url = f"{domain}/{urllib.parse.quote(drive_name)}"
 
-    if setup_method == "ftp":
-        host = prompt("FTP host", urllib.parse.urlparse(domain).hostname or "")
-        user = prompt("FTP username")
-        ftp_password = prompt("FTP password", secret=True)
+    if setup_method in {"ftp", "ftps"}:
+        host = prompt("FTPS host", urllib.parse.urlparse(domain).hostname or "")
+        user = prompt("FTPS username")
+        ftp_password = prompt("FTPS password", secret=True)
         public_html = prompt("Remote public_html path", "public_html")
         remote_root = posixpath.join(public_html.strip("/"), drive_name)
         print(f"Uploading web app to /{remote_root} ...")
-        with ftplib.FTP(host, timeout=60) as ftp:
+        with ftplib.FTP_TLS(host, timeout=60) as ftp:
             ftp.login(user, ftp_password)
+            ftp.prot_p()
             ftp_upload_tree(ftp, APP_DIR, remote_root)
     else:
         print()
@@ -488,9 +584,8 @@ def run_setup() -> dict[str, Any]:
         "password": password,
         "interval": DEFAULT_INTERVAL,
     }
-    save_json(config_path(local_root), config)
-    save_json(LAST_CONFIG_PATH, config)
-    print(f"Saved config: {config_path(local_root)}")
+    save_config(config)
+    print(f"Saved config: {LAST_CONFIG_PATH}")
     return config
 
 
@@ -500,13 +595,14 @@ def load_or_setup(args: argparse.Namespace) -> dict[str, Any]:
     if args.local:
         cfg = load_json(config_path(Path(args.local).expanduser().resolve()), {})
         if cfg:
+            save_config(cfg)
             return cfg
     cfg = load_json(LAST_CONFIG_PATH, {})
     if cfg:
         return cfg
     legacy_cfg = load_json(LEGACY_LAST_CONFIG_PATH, {})
     if legacy_cfg:
-        save_json(LAST_CONFIG_PATH, legacy_cfg)
+        save_config(legacy_cfg)
         return legacy_cfg
     return run_setup()
 
