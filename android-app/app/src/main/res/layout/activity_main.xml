@@ -59,7 +59,7 @@
             android:contentDescription="Menu"
             android:padding="11dp"
             android:src="@drawable/ic_menu_lines"
-            android:tint="@color/freecloud_blue_dark"
+            app:tint="@color/freecloud_blue_dark"
             android:visibility="gone" />
     </LinearLayout>
 

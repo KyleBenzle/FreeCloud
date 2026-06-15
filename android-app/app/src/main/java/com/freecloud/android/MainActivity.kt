@@ -361,12 +361,12 @@ class MainActivity : AppCompatActivity() {
     private fun registerStatusReceiver() {
         if (statusReceiverRegistered) return
         val filter = IntentFilter(SyncRuntime.ACTION_STATUS)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(statusReceiver, filter, RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("DEPRECATION")
-            registerReceiver(statusReceiver, filter)
-        }
+        ContextCompat.registerReceiver(
+            this,
+            statusReceiver,
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
         statusReceiverRegistered = true
     }
 
