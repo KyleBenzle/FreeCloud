@@ -1,0 +1,7 @@
+#!/usr/bin/env sh
+set -eu
+
+export XDG_CONFIG_HOME="${SNAP_USER_DATA}/.config"
+export XDG_STATE_HOME="${SNAP_USER_DATA}/.local/state"
+
+exec "${SNAP}/usr/bin/python3" "${SNAP}/freecloud/freecloud_cli.py" "$@"

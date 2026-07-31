@@ -1,0 +1,59 @@
+name: freecloud
+base: core24
+version: "2.1.1"
+summary: Personal cloud drive using existing web hosting
+description: |
+  FreeCloud turns storage space from an existing PHP web-hosting account into
+  a personal cloud drive. The desktop client provides a file browser and keeps
+  a selected local folder synchronized with the user's hosted FreeCloud drive.
+
+grade: stable
+confinement: strict
+license: GPL-3.0-or-later
+
+apps:
+  freecloud:
+    command: bin/freecloud-snap
+    desktop: snap/gui/freecloud.desktop
+    plugs:
+      - desktop
+      - desktop-legacy
+      - home
+      - network
+      - network-bind
+      - wayland
+      - x11
+  cli:
+    command: bin/freecloud-cli-snap
+    plugs:
+      - home
+      - network
+
+parts:
+  freecloud:
+    plugin: dump
+    source: .
+    stage-packages:
+      - python3
+      - python3-tk
+      - xdg-utils
+      - gir1.2-ayatanaappindicator3-0.1
+      - gir1.2-gtk-3.0
+      - python3-gi
+    organize:
+      freecloud_ui.py: freecloud/freecloud_ui.py
+      freecloud_cli.py: freecloud/freecloud_cli.py
+      server: freecloud/server
+      FClogo.png: freecloud/FClogo.png
+      icon.png: freecloud/icon.png
+      logo.png: freecloud/logo.png
+      snap/local/freecloud-snap: bin/freecloud-snap
+      snap/local/freecloud-cli-snap: bin/freecloud-cli-snap
+      snap/gui/freecloud.desktop: snap/gui/freecloud.desktop
+      snap/gui/freecloud.png: snap/gui/freecloud.png
+    stage:
+      - freecloud/**
+      - bin/freecloud-snap
+      - bin/freecloud-cli-snap
+      - snap/gui/freecloud.desktop
+      - snap/gui/freecloud.png

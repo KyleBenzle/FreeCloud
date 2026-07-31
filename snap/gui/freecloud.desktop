@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=FreeCloud
+Comment=Personal cloud drive using existing web hosting
+Categories=Network;FileTransfer;
+Exec=freecloud
+Icon=${SNAP}/meta/gui/freecloud.png
+StartupNotify=true
+Terminal=false
