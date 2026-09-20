@@ -163,7 +163,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
-                    android:text="Start Syncing"
+                    android:text="Connect"
                     app:cornerRadius="26dp" />
             </LinearLayout>
 
@@ -189,7 +189,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="My Synced Files"
+                        android:text="FreeCloud Files"
                         android:textColor="@color/freecloud_ink"
                         android:textSize="24sp"
                         android:textStyle="bold" />
@@ -258,6 +258,76 @@
                     android:text="0 items in this folder"
                     android:textColor="@color/freecloud_muted"
                     android:textSize="14sp" />
+
+                <LinearLayout
+                    android:id="@+id/playerSection"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:background="@drawable/freecloud_subtle_panel_bg"
+                    android:orientation="vertical"
+                    android:padding="14dp"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:id="@+id/nowPlayingText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Nothing playing"
+                        android:textColor="@color/freecloud_ink"
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/playerProgressText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="00:00"
+                        android:textColor="@color/freecloud_muted"
+                        android:textSize="13sp" />
+
+                    <VideoView
+                        android:id="@+id/videoPlayerView"
+                        android:layout_width="match_parent"
+                        android:layout_height="190dp"
+                        android:layout_marginTop="10dp"
+                        android:visibility="gone" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <Button
+                            android:id="@+id/playPauseButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="Play"
+                            app:cornerRadius="22dp" />
+
+                        <Button
+                            android:id="@+id/restartButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:layout_weight="1"
+                            android:text="Restart"
+                            app:cornerRadius="22dp" />
+
+                        <Button
+                            android:id="@+id/nextButton"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:layout_weight="1"
+                            android:text="Next"
+                            app:cornerRadius="22dp" />
+                    </LinearLayout>
+                </LinearLayout>
 
                 <LinearLayout
                     android:id="@+id/filesRecyclerView"

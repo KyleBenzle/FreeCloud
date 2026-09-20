@@ -29,3 +29,7 @@ debian/*.substvars
 *.changes
 *.deb
 *.dsc
+*.snap
+
+# Local submission screenshots
+/rejected.png

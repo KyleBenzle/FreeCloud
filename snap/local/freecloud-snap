@@ -3,5 +3,7 @@ set -eu
 
 export XDG_CONFIG_HOME="${SNAP_USER_DATA}/.config"
 export XDG_STATE_HOME="${SNAP_USER_DATA}/.local/state"
+export PYTHONHOME="${SNAP}/usr"
+export PYTHONPATH="${SNAP}/usr/lib/python3.12:${SNAP}/usr/lib/python3/dist-packages"
 
 exec "${SNAP}/usr/bin/python3" "${SNAP}/freecloud/freecloud_ui.py" "$@"

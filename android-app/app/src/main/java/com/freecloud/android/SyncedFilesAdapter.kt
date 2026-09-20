@@ -14,6 +14,9 @@ data class SyncedFileItem(
     val subtitle: String,
     val status: String,
     val isSynced: Boolean,
+    val hasLocalCopy: Boolean = false,
+    val hasWebServerCopy: Boolean = true,
+    val isPlayable: Boolean = false,
 )
 
 class SyncedFilesAdapter(

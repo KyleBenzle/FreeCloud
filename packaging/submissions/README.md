@@ -1,7 +1,11 @@
 # Debian and Ubuntu Submission
 
-FreeCloud's upstream release is `2.1.1`. Debian repacks generated binaries out
-of the source archive, so its first package version is `2.1.1+dfsg-1`.
+FreeCloud's current upstream desktop/server release is `2.1.1`. Debian repacks
+generated binaries out of the source archive, and the current Debian changelog
+uses `2.1.1+dfsg2-1`.
+
+Android is versioned separately. The Android app is currently `0.3` in
+`android-app/app/build.gradle.kts`.
 
 ## 1. Publish the upstream release
 
@@ -22,13 +26,14 @@ submit@bugs.debian.org
 
 Send it from `Kyle Benzle <kbe@gmx.us>`. Debian will reply with a bug number.
 
-Update `debian/changelog` after receiving the number:
+The current Debian changelog already records ITP bug `#1139338`:
 
 ```text
-  * Initial Debian release. (Closes: #1234567)
+  * Initial Debian release. (Closes: #1139338)
 ```
 
-Replace `1234567` with the real ITP number, then rebuild the package.
+If the ITP changes or a new sponsorship bug is filed, update the changelog and
+submission templates before rebuilding the package.
 
 ## 3. Sign the package
 

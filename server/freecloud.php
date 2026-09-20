@@ -18,6 +18,7 @@ if (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
 session_start();
 
 $storageRoot = $baseDir . '/freecloud_files';
+$metaRoot = $baseDir . '/freecloud_meta';
 $configFile = $baseDir . '/config.json';
 
 function ensureStorageRoot(string $storageRoot): void
@@ -32,6 +33,18 @@ function ensureStorageRoot(string $storageRoot): void
     }
 }
 
+function ensureProtectedDirectory(string $path): void
+{
+    if (!is_dir($path)) {
+        mkdir($path, 0775, true);
+    }
+
+    $denyFile = $path . '/.htaccess';
+    if (!is_file($denyFile)) {
+        @file_put_contents($denyFile, "Require all denied\nDeny from all\n", LOCK_EX);
+    }
+}
+
 function loadConfig(string $configFile): ?array
 {
     if (!is_file($configFile)) {
@@ -41,6 +54,17 @@ function loadConfig(string $configFile): ?array
     $raw = file_get_contents($configFile);
     $config = json_decode(is_string($raw) ? $raw : '', true);
     return is_array($config) ? $config : null;
+}
+
+function loadJsonMap(string $path): array
+{
+    if (!is_file($path)) {
+        return [];
+    }
+
+    $raw = file_get_contents($path);
+    $data = json_decode(is_string($raw) ? $raw : '', true);
+    return is_array($data) ? $data : [];
 }
 
 function saveConfig(string $configFile, string $name, string $password): bool
@@ -133,6 +157,13 @@ function resolveExistingPath(string $root, string $relativePath): ?string
     return $target;
 }
 
+function normalizeDeviceId(string $value): string
+{
+    $value = strtolower(trim($value));
+    $value = preg_replace('/[^a-z0-9._-]+/', '-', $value) ?? '';
+    return trim($value, '.-_');
+}
+
 function normalizeUploads(array $files): array
 {
     if (!isset($files['name']) || !is_array($files['name'])) {
@@ -209,6 +240,244 @@ function videoMimeType(string $filename): string
         'ogv', 'ogg' => 'video/ogg',
         default => 'video/mp4',
     };
+}
+
+function entryInfo(string $root, string $absolutePath): ?array
+{
+    $real = realpath($absolutePath);
+    if ($real === false || !isWithinRoot($real, $root)) {
+        return null;
+    }
+
+    $relative = ltrim(str_replace('\\', '/', substr($real, strlen($root))), '/');
+    if ($relative === '.htaccess' || str_starts_with($relative, '.htaccess/')) {
+        return null;
+    }
+
+    $isDir = is_dir($real);
+    return [
+        'path' => $relative,
+        'name' => basename($real),
+        'type' => $isDir ? 'dir' : 'file',
+        'size' => $isDir ? 0 : (filesize($real) ?: 0),
+        'mtime' => filemtime($real) ?: 0,
+        'locations' => [[
+            'kind' => 'web_server',
+            'device_id' => 'web_server',
+            'name' => 'Web Server',
+            'available' => true,
+            'updated_at' => time(),
+        ]],
+    ];
+}
+
+function physicalMetadataEntries(string $root): array
+{
+    $entries = [];
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
+
+    foreach ($iterator as $item) {
+        if ($item->getFilename() === '.htaccess') {
+            continue;
+        }
+        $info = entryInfo($root, $item->getPathname());
+        if ($info !== null && $info['path'] !== '') {
+            $entries[$info['path']] = $info;
+        }
+    }
+
+    return $entries;
+}
+
+function uniqueLocations(array $locations): array
+{
+    $seen = [];
+    $out = [];
+    foreach ($locations as $location) {
+        if (!is_array($location)) {
+            continue;
+        }
+        $kind = (string) ($location['kind'] ?? '');
+        $deviceId = normalizeDeviceId((string) ($location['device_id'] ?? ''));
+        if ($kind === '' || $deviceId === '') {
+            continue;
+        }
+        $key = $kind . ':' . $deviceId;
+        $clean = [
+            'kind' => $kind,
+            'device_id' => $deviceId,
+            'name' => trim((string) ($location['name'] ?? '')),
+            'available' => (bool) ($location['available'] ?? true),
+            'updated_at' => max(0, (int) ($location['updated_at'] ?? 0)),
+        ];
+        if (!isset($seen[$key])) {
+            $seen[$key] = count($out);
+            $out[] = $clean;
+            continue;
+        }
+        $index = $seen[$key];
+        if ($clean['updated_at'] >= (int) ($out[$index]['updated_at'] ?? 0)) {
+            $out[$index] = $clean;
+        }
+    }
+    return $out;
+}
+
+function metadataEntries(string $root, string $filesFile): array
+{
+    $entries = physicalMetadataEntries($root);
+    foreach (loadJsonMap($filesFile) as $path => $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $cleanPath = normalizeRelativePath((string) ($entry['path'] ?? $path));
+        if ($cleanPath === '' || (bool) ($entry['deleted'] ?? false)) {
+            continue;
+        }
+        $locations = [];
+        if (isset($entries[$cleanPath]) && is_array($entries[$cleanPath]['locations'] ?? null)) {
+            $locations = (array) $entries[$cleanPath]['locations'];
+        }
+        foreach (($entry['locations'] ?? []) as $location) {
+            if (is_array($location)) {
+                $locations[] = $location;
+            }
+        }
+        $entries[$cleanPath] = [
+            'path' => $cleanPath,
+            'name' => (string) ($entry['name'] ?? basename($cleanPath)),
+            'type' => (string) ($entry['type'] ?? 'file'),
+            'size' => max(0, (int) ($entry['size'] ?? 0)),
+            'mtime' => max(0, (int) ($entry['mtime'] ?? 0)),
+            'locations' => uniqueLocations($locations),
+        ];
+    }
+
+    uasort($entries, static fn(array $a, array $b): int => strnatcasecmp((string) $a['path'], (string) $b['path']));
+    return $entries;
+}
+
+function entryHasWebServerLocation(array $entry): bool
+{
+    $locations = $entry['locations'] ?? [];
+    if (!is_array($locations) || $locations === []) {
+        return true;
+    }
+    foreach ($locations as $location) {
+        if (
+            is_array($location) &&
+            (string) ($location['kind'] ?? '') === 'web_server' &&
+            (bool) ($location['available'] ?? true)
+        ) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function availableFromLabel(array $entry): string
+{
+    $locations = $entry['locations'] ?? [];
+    if (!is_array($locations) || $locations === []) {
+        return 'Web Server';
+    }
+
+    $labels = [];
+    $seen = [];
+    foreach ($locations as $location) {
+        if (!is_array($location) || !(bool) ($location['available'] ?? true)) {
+            continue;
+        }
+        $kind = (string) ($location['kind'] ?? '');
+        $name = trim((string) ($location['name'] ?? ''));
+        $deviceId = (string) ($location['device_id'] ?? '');
+        if ($kind === 'web_server') {
+            $label = 'Web Server';
+        } elseif ($name !== '') {
+            $label = $name;
+        } elseif ($deviceId !== '') {
+            $label = $deviceId;
+        } elseif ($kind !== '') {
+            $label = ucwords(str_replace('_', ' ', $kind));
+        } else {
+            continue;
+        }
+        if (!isset($seen[$label])) {
+            $seen[$label] = true;
+            $labels[] = $label;
+        }
+    }
+
+    if ($labels === []) {
+        return 'Unavailable';
+    }
+    if (count($labels) <= 2) {
+        return implode(', ', $labels);
+    }
+    return $labels[0] . ', +' . (count($labels) - 1) . ' more';
+}
+
+function listMetadataEntries(string $root, string $filesFile, string $displayPath, string $sort): array
+{
+    $cleanFolder = normalizeRelativePath($displayPath);
+    $prefix = $cleanFolder === '' ? '' : $cleanFolder . '/';
+    $entries = [];
+
+    foreach (metadataEntries($root, $filesFile) as $entry) {
+        $path = (string) ($entry['path'] ?? '');
+        if ($path === '') {
+            continue;
+        }
+        if ($cleanFolder !== '') {
+            if (!str_starts_with($path, $prefix)) {
+                continue;
+            }
+            $remainder = substr($path, strlen($prefix));
+        } else {
+            $remainder = $path;
+        }
+        if ($remainder === '' || str_contains($remainder, '/')) {
+            continue;
+        }
+
+        $isDir = (string) ($entry['type'] ?? '') === 'dir';
+        $name = (string) ($entry['name'] ?? basename($path));
+        $hasWebServerCopy = entryHasWebServerLocation($entry);
+        $isImage = !$isDir && $hasWebServerCopy && isPreviewableImageFile($name);
+        $isVideo = !$isDir && $hasWebServerCopy && isPlayableVideoFile($name);
+
+        $entries[] = [
+            'name' => $name,
+            'path' => $path,
+            'isDir' => $isDir,
+            'isImage' => $isImage,
+            'isVideo' => $isVideo,
+            'isEditable' => !$isDir && $hasWebServerCopy && isEditableFile($name),
+            'previewUrl' => ($isImage || $isVideo) ? 'freecloud_preview.php?path=' . rawurlencode($path) : null,
+            'videoMimeType' => $isVideo ? videoMimeType($name) : null,
+            'size' => $isDir ? null : (int) ($entry['size'] ?? 0),
+            'modifiedAt' => (int) ($entry['mtime'] ?? 0),
+            'availableFrom' => availableFromLabel($entry),
+            'hasWebServerCopy' => $hasWebServerCopy,
+        ];
+    }
+
+    usort($entries, static function (array $a, array $b) use ($sort): int {
+        if ($a['isDir'] !== $b['isDir']) {
+            return $a['isDir'] ? -1 : 1;
+        }
+
+        return match ($sort) {
+            'newest' => ((int) $b['modifiedAt'] <=> (int) $a['modifiedAt']) ?: strnatcasecmp($a['name'], $b['name']),
+            'oldest' => ((int) $a['modifiedAt'] <=> (int) $b['modifiedAt']) ?: strnatcasecmp($a['name'], $b['name']),
+            default => strnatcasecmp($a['name'], $b['name']),
+        };
+    });
+
+    return $entries;
 }
 
 function listEntries(string $directory, string $displayPath, string $sort): array
@@ -534,6 +803,11 @@ body {
     background: var(--danger-light);
     border-color: var(--danger);
 }
+.action-note {
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
+}
 
 /* ── Upload zone ── */
 .upload {
@@ -799,11 +1073,13 @@ CSS;
 }
 
 ensureStorageRoot($storageRoot);
+ensureProtectedDirectory($metaRoot);
 $realStorageRoot = realpath($storageRoot);
 if ($realStorageRoot === false) {
     http_response_code(500);
     exit('Could not prepare freecloud_files.');
 }
+$filesFile = $metaRoot . '/files.json';
 
 $config = loadConfig($configFile);
 $setupError = '';
@@ -975,7 +1251,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $targetDirectory = resolveExistingPath($realStorageRoot, $currentPath);
     if ($targetDirectory === null || !is_dir($targetDirectory)) {
-        redirectToDrive('', 'That folder does not exist anymore.', 'error', $sort);
+        $targetDirectory = pathToAbsolute($realStorageRoot, $currentPath);
+        if (!isWithinRoot($targetDirectory, $realStorageRoot)) {
+            redirectToDrive('', 'That folder does not exist anymore.', 'error', $sort);
+        }
+        if (!is_dir($targetDirectory) && !mkdir($targetDirectory, 0775, true) && !is_dir($targetDirectory)) {
+            redirectToDrive('', 'Could not create the target folder.', 'error', $sort);
+        }
+        $realTargetDirectory = realpath($targetDirectory);
+        if ($realTargetDirectory === false || !isWithinRoot($realTargetDirectory, $realStorageRoot)) {
+            redirectToDrive('', 'That folder does not exist anymore.', 'error', $sort);
+        }
+        $targetDirectory = $realTargetDirectory;
     }
 
     $uploads = normalizeUploads($_FILES['files'] ?? []);
@@ -1049,14 +1336,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($_GET['action'] ?? '') === 'load_fi
 
 $driveName = (string) ($config['name'] ?? 'FreeCloud');
 $currentPath = normalizeRelativePath((string) ($_GET['path'] ?? ''));
-$sort = in_array((string) ($_GET['sort'] ?? 'name'), ['name', 'newest', 'oldest'], true) ? (string) $_GET['sort'] : 'name';
+$requestedSort = (string) ($_GET['sort'] ?? 'name');
+$sort = in_array($requestedSort, ['name', 'newest', 'oldest'], true) ? $requestedSort : 'name';
 $currentDirectory = resolveExistingPath($realStorageRoot, $currentPath);
-if ($currentDirectory === null || !is_dir($currentDirectory)) {
+$entries = listMetadataEntries($realStorageRoot, $filesFile, $currentPath, $sort);
+if (($currentDirectory === null || !is_dir($currentDirectory)) && $entries === []) {
     $currentPath = '';
     $currentDirectory = $realStorageRoot;
+    $entries = listMetadataEntries($realStorageRoot, $filesFile, $currentPath, $sort);
 }
 
-$entries = listEntries($currentDirectory, $currentPath, $sort);
 $breadcrumbs = buildBreadcrumbs($currentPath);
 $message = isset($_GET['message']) ? trim((string) $_GET['message']) : '';
 $messageType = (string) ($_GET['type'] ?? 'success');
@@ -1132,7 +1421,7 @@ if ($parentPath === '.') {
                 <?php if ($parentPath !== null): ?>
                     <a class="button-link" href="freecloud.php<?= $parentPath === '' ? '?sort=' . rawurlencode($sort) : '?path=' . rawurlencode($parentPath) . '&sort=' . rawurlencode($sort) ?>">Up One Folder</a>
                 <?php endif; ?>
-                <?php if ($currentPath !== ''): ?>
+                <?php if ($currentPath !== '' && $currentDirectory !== null && is_dir($currentDirectory)): ?>
                     <a class="button-link primary" href="freecloud_download.php?path=<?= rawurlencode($currentPath) ?>">Download ZIP</a>
                 <?php endif; ?>
             </div>
@@ -1186,6 +1475,7 @@ if ($parentPath === '.') {
                             <?php endif; ?>
                             <div class="meta">
                                 <?= $entry['isDir'] ? 'Folder' : formatBytes((int) $entry['size']) ?>
+                                &nbsp;·&nbsp;Available from <?= h((string) $entry['availableFrom']) ?>
                                 <?php if ((int) $entry['modifiedAt'] > 0): ?>&nbsp;·&nbsp;<?= h(date('M j, Y g:i A', (int) $entry['modifiedAt'])) ?><?php endif; ?>
                             </div>
                         </div>
@@ -1196,15 +1486,27 @@ if ($parentPath === '.') {
                             <?php if ($entry['isEditable']): ?>
                                 <button class="button edit-button" type="button" data-path="<?= h($entry['path']) ?>" data-name="<?= h($entry['name']) ?>">Edit</button>
                             <?php endif; ?>
-                            <a class="button-link" href="freecloud_download.php?path=<?= rawurlencode($entry['path']) ?>">Download</a>
-                            <form method="post">
-                                <input type="hidden" name="action" value="delete">
-                                <input type="hidden" name="csrf_token" value="<?= h(csrfToken()) ?>">
-                                <input type="hidden" name="current_path" value="<?= h($currentPath) ?>">
-                                <input type="hidden" name="target_path" value="<?= h($entry['path']) ?>">
-                                <input type="hidden" name="sort" value="<?= h($sort) ?>">
-                                <button class="button danger delete-button" type="submit" data-name="<?= h($entry['name']) ?>">Delete</button>
-                            </form>
+                            <?php if ($entry['hasWebServerCopy']): ?>
+                                <a class="button-link" href="freecloud_download.php?path=<?= rawurlencode($entry['path']) ?>">Download</a>
+                                <form method="post">
+                                    <input type="hidden" name="action" value="delete">
+                                    <input type="hidden" name="csrf_token" value="<?= h(csrfToken()) ?>">
+                                    <input type="hidden" name="current_path" value="<?= h($currentPath) ?>">
+                                    <input type="hidden" name="target_path" value="<?= h($entry['path']) ?>">
+                                    <input type="hidden" name="sort" value="<?= h($sort) ?>">
+                                    <button class="button danger delete-button" type="submit" data-name="<?= h($entry['name']) ?>">Delete</button>
+                                </form>
+                            <?php else: ?>
+                                <?php if (!$entry['isDir']): ?>
+                                    <form method="post" action="freecloud_transfer.php?action=create">
+                                        <input type="hidden" name="csrf_token" value="<?= h(csrfToken()) ?>">
+                                        <input type="hidden" name="path" value="<?= h($entry['path']) ?>">
+                                        <button class="button" type="submit">Download</button>
+                                    </form>
+                                <?php else: ?>
+                                    <span class="action-note">Node only</span>
+                                <?php endif; ?>
+                            <?php endif; ?>
                         </div>
                         <?php if (($entry['isImage'] || $entry['isVideo']) && $entry['previewUrl'] !== null): ?>
                             <div class="preview" id="<?= h($previewId) ?>">

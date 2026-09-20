@@ -8,6 +8,7 @@ data class FreeCloudConfig(
     val treeUri: String,
     val intervalSeconds: Int = 30,
     val deleteRemote: Boolean = false,
+    val autoSync: Boolean = false,
 )
 
 data class ManifestEntry(
@@ -16,9 +17,39 @@ data class ManifestEntry(
     val type: String,
     val size: Long,
     val mtime: Long,
+    val locations: List<StorageLocation> = emptyList(),
 ) {
     val isDirectory: Boolean
         get() = type == "dir"
+
+    val hasWebServerCopy: Boolean
+        get() = locations.isEmpty() || locations.any { it.kind == "web_server" && it.available }
+
+    fun availableFromLabel(): String {
+        if (locations.isEmpty()) return "Web Server"
+        val labels = locations
+            .filter { it.available }
+            .map { it.displayName() }
+            .distinct()
+        if (labels.isEmpty()) return "Unavailable"
+        return if (labels.size <= 2) labels.joinToString(", ") else "${labels.first()}, +${labels.size - 1} more"
+    }
+}
+
+data class StorageLocation(
+    val kind: String,
+    val deviceId: String,
+    val name: String,
+    val available: Boolean,
+) {
+    fun displayName(): String {
+        if (name.isNotBlank()) return name
+        return when (kind) {
+            "web_server" -> "Web Server"
+            "local_node" -> "Storage Node"
+            else -> kind.ifBlank { "Storage" }
+        }
+    }
 }
 
 data class SyncState(

@@ -1,4 +1,5 @@
 name: freecloud
+title: FreeCloud
 base: core24
 version: "2.1.1"
 summary: Personal cloud drive using existing web hosting
@@ -10,6 +11,10 @@ description: |
 grade: stable
 confinement: strict
 license: GPL-3.0-or-later
+website: https://freecloud.wiki
+contact: https://github.com/KyleBenzle/FreeCloud/issues
+source-code: https://github.com/KyleBenzle/FreeCloud
+issues: https://github.com/KyleBenzle/FreeCloud/issues
 
 apps:
   freecloud:
@@ -33,8 +38,13 @@ parts:
   freecloud:
     plugin: dump
     source: .
+    source-type: local
     stage-packages:
       - python3
+      - python3-minimal
+      - libpython3.12-minimal
+      - libpython3.12-stdlib
+      - python3.12-minimal
       - python3-tk
       - xdg-utils
       - gir1.2-ayatanaappindicator3-0.1
@@ -57,3 +67,6 @@ parts:
       - bin/freecloud-cli-snap
       - snap/gui/freecloud.desktop
       - snap/gui/freecloud.png
+      - etc/**
+      - lib/**
+      - usr/**

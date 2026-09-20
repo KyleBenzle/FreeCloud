@@ -1,0 +1,506 @@
+FreeCloud Roadmap Notes
+=======================
+
+Goal: selective sync across web, desktop, Android, Raspberry Pi, and future iOS clients.
+
+Current Baseline
+----------------
+
+FreeCloud currently uses the hosted PHP web app/API as the central source of truth.
+
+The user uploads the server files to a PHP web host, for example:
+
+    public_html/FreeCloud/
+
+Then the user visits:
+
+    https://yourwebsite.com/FreeCloud
+
+The hosted web interface shows the cloud drive. Desktop, Android, and CLI clients connect to
+the same hosted FreeCloud API using the configured website address and password.
+
+Current sync behavior is mostly whole-folder sync:
+
+- Local files upload to the hosted FreeCloud storage.
+- Remote files download to each configured device.
+- Remote deletes can remove unchanged local files.
+- Local deletes do not remove remote files by default.
+
+This works for small/medium collections, but it does not scale well when the remote drive has
+large folders such as a 500 GB music/audio library and each phone/laptop should only keep part
+of it locally.
+
+Major New Requirement
+---------------------
+
+Each device must be able to choose which FreeCloud files or folders are synced locally.
+
+Examples:
+
+- Raspberry Pi with external hard drive:
+  - Sync the full music/audio archive.
+  - Run continuously as a local always-on FreeCloud node.
+  - Start automatically on boot.
+
+- Android phone:
+  - Sync only selected folders, playlists, photos, or documents.
+  - Browse the full remote tree without downloading everything.
+  - Download/pin specific files or folders for offline use.
+
+- Desktop/laptop:
+  - Sync selected local folders up to FreeCloud.
+  - Sync selected FreeCloud folders down to this computer.
+  - Avoid pulling huge media folders unless explicitly selected.
+
+- Web app:
+  - Remains the central browser interface.
+  - Shows files available in FreeCloud.
+  - Allows the user to manage devices and sync rules.
+
+Core Concept: Devices
+---------------------
+
+FreeCloud should register each client as a device.
+
+Each device should have a stable ID and user-facing name.
+
+Potential device fields:
+
+- device_id: stable generated ID, not just hostname.
+- name: user-facing name, such as "Living Room Pi" or "Kyle Phone".
+- type: desktop, android, raspberry_pi, cli, web, future_ios.
+- first_seen_at.
+- last_seen_at.
+- client_version.
+- capabilities:
+  - supports_background_sync.
+  - supports_external_drive.
+  - supports_selective_sync.
+  - supports_delete_remote.
+
+The server should keep a persistent device registry.
+
+Possible storage:
+
+- Simple phase 1:
+  - config/devices.json
+  - config/sync_rules.json
+
+- More robust later:
+  - SQLite database on the PHP host if available.
+  - Abstract metadata storage so Backblaze or other backends can be added later.
+
+Core Concept: Selective Sync Rules
+----------------------------------
+
+FreeCloud needs persistent rules that define what each device syncs.
+
+Rules may be per-device and path-based.
+
+Possible rule model:
+
+    {
+      "device_id": "abc123",
+      "path": "Music",
+      "mode": "sync",
+      "recursive": true
+    }
+
+Possible modes:
+
+- ignore:
+  - Do not sync this path to this device.
+
+- browse_only:
+  - Show in the file browser, but do not download automatically.
+
+- download_on_demand:
+  - Download only when the user opens or requests it.
+
+- pinned:
+  - Keep this file/folder available locally.
+  - Continue syncing changes.
+
+- sync:
+  - Full two-way sync for this path.
+
+- upload_only:
+  - Device uploads local changes to FreeCloud but does not download remote changes automatically.
+
+- download_only:
+  - Device downloads remote changes but does not upload local changes.
+
+Nested Rule Behavior
+--------------------
+
+Rules need clear inheritance.
+
+Example:
+
+    Music/                 browse_only
+    Music/Favorites/       pinned
+    Music/Archive/         ignore
+
+Expected behavior:
+
+- The broader Music folder is visible but not fully downloaded.
+- Music/Favorites stays synced locally.
+- Music/Archive does not sync to that device.
+
+Rule resolution should use "most specific path wins".
+
+Questions to decide:
+
+- Should a child rule always override a parent rule?
+- Should ignored folders still appear in the browser tree?
+- Should ignored folders be hidden from a device, or just not synced?
+- Should rules apply to files, folders, or both?
+
+Local Placeholder Model
+-----------------------
+
+Selective sync requires deciding what a device stores when a remote file is visible but not local.
+
+Options:
+
+1. No local placeholder files.
+   - The app UI shows the remote tree.
+   - The filesystem only contains downloaded/pinned files.
+   - Simplest and safest for phase 1.
+
+2. Metadata placeholder files.
+   - Create small marker files locally for remote-only files.
+   - Could confuse users and other apps.
+   - Risky unless designed carefully.
+
+3. Virtual filesystem.
+   - Mount FreeCloud as a virtual drive.
+   - Best UX long term, but much more complex.
+   - Not a phase 1 target.
+
+Recommended phase 1:
+
+- Do not create placeholders.
+- Let the app/CLI show remote-only files in its own browser.
+- Only create real local files when a file/folder is selected for sync or downloaded on demand.
+
+Server Metadata
+---------------
+
+The hosted server should own metadata needed by all clients.
+
+Potential metadata files:
+
+- freecloud_meta/devices.json
+- freecloud_meta/sync_rules.json
+- freecloud_meta/file_index.json
+- freecloud_meta/activity_log.json
+
+Important: metadata should not live inside the user-visible synced file tree.
+
+The server should protect metadata the same way it protects:
+
+- config.json
+- freecloud_sessions/
+- freecloud_files/.htaccess
+
+Server API Additions
+--------------------
+
+New API actions likely needed:
+
+- register_device
+  - Client sends name, type, capabilities, optional existing device_id.
+  - Server returns stable device_id.
+
+- list_devices
+  - Returns registered devices.
+
+- update_device
+  - Rename device, update capabilities, mark active/inactive.
+
+- get_sync_rules
+  - Returns rules for a device, or all rules for admin/web UI.
+
+- set_sync_rules
+  - Updates selected paths/modes for a device.
+
+- manifest
+  - May need optional device_id parameter.
+  - Could return all files plus rule state, or only files relevant to the device.
+
+- list
+  - Could return folder entries plus local sync status for the requesting device.
+
+- pin_path / unpin_path
+  - Convenience API for phone/desktop UI.
+
+- device_status
+  - Report last sync, errors, local storage path, free disk space, etc.
+
+Client Sync Algorithm Changes
+-----------------------------
+
+Current clients compare:
+
+- local manifest
+- remote manifest
+- previous sync state
+
+New clients should compare:
+
+- local manifest
+- remote manifest
+- previous sync state
+- device sync rules
+
+Before deciding to download or upload a path, the client must resolve that path's sync mode.
+
+Possible behavior:
+
+- ignore:
+  - Do nothing.
+
+- browse_only:
+  - Do not download.
+  - Do not upload local files unless they are inside an explicitly synced local source.
+
+- pinned/sync:
+  - Download remote changes.
+  - Upload local changes.
+
+- upload_only:
+  - Upload local changes.
+  - Do not download remote-only files automatically.
+
+- download_only:
+  - Download remote changes.
+  - Do not upload local changes.
+
+Important design issue:
+
+There are two different concepts:
+
+1. Local folders that should upload into FreeCloud.
+2. FreeCloud folders that should download/sync to this device.
+
+The setup UI should support both.
+
+Desktop Setup Flow
+------------------
+
+When the desktop app logs in:
+
+1. Connect to the FreeCloud server.
+2. Register or reuse this device.
+3. Let the user choose a device name.
+4. Let the user choose local folders to upload/sync into FreeCloud.
+5. Let the user browse the FreeCloud tree and choose folders/files to keep synced locally.
+6. Save device-specific sync rules.
+7. Start background sync.
+
+Desktop UI should show:
+
+- Device name.
+- Local sync root/folders.
+- Remote folders selected for this device.
+- Browse-only remote folders.
+- Pinned/offline folders.
+- Last sync status.
+
+Android Flow
+------------
+
+The Android app is currently working well, so changes should be careful and incremental.
+
+Android should eventually support:
+
+- Device registration.
+- Browse full FreeCloud tree.
+- Pin/unpin folders or files for offline sync.
+- Keep selected folders synced.
+- Avoid automatic full-drive download.
+
+Phase 1 Android approach:
+
+- Preserve existing full-folder behavior unless the server has selective sync enabled.
+- Add device registration.
+- Add protected path filtering.
+- Add simple pinned folder list.
+- Avoid a large UI rewrite until the server and desktop model are stable.
+
+Raspberry Pi / CLI Flow
+-----------------------
+
+The Raspberry Pi client should be a strong first-class use case.
+
+Expected Pi setup:
+
+- Install FreeCloud CLI/service.
+- Attach external hard drive.
+- Choose the external drive path as local storage.
+- Register the Pi as a device.
+- Select which FreeCloud folders should stay synced to the Pi.
+- Optionally choose local folders on the external drive to upload into FreeCloud.
+- Install a systemd service.
+- Start automatically on boot.
+- Log sync activity to a predictable file.
+
+CLI setup options should include:
+
+- Website address.
+- Password.
+- Device name.
+- Local root path.
+- Select remote folders to sync.
+- Select local folders to upload/sync.
+- Enable/disable remote deletion.
+- Enable/disable boot startup.
+- Service install/status/start/stop commands.
+
+Potential CLI commands:
+
+    freecloud setup
+    freecloud device list
+    freecloud device rename
+    freecloud rules list
+    freecloud rules add PATH --mode pinned
+    freecloud rules remove PATH
+    freecloud sync --once
+    freecloud service install
+    freecloud service start
+    freecloud service stop
+    freecloud service status
+
+Backblaze / Future Storage Backend
+----------------------------------
+
+The project may eventually support Backblaze as a storage backend.
+
+This means the server code should avoid assuming every stored file is directly on local PHP disk forever.
+
+Possible long-term storage abstraction:
+
+- local_php_storage:
+  - Current freecloud_files/ behavior.
+
+- backblaze_b2:
+  - Store file bytes in Backblaze B2.
+  - Keep metadata/index in PHP metadata storage.
+
+- raspberry_pi_node:
+  - Pi acts as a local large-storage node.
+  - Web server remains the coordination/control point.
+
+Important unresolved architecture question:
+
+Should the hosted PHP web server always store the actual file bytes, or can it become mostly a
+metadata/control server while a Raspberry Pi or Backblaze stores the large content?
+
+Possible Architectures
+----------------------
+
+Architecture A: Hosted PHP remains the main file store.
+
+Pros:
+
+- Closest to current FreeCloud.
+- Easiest to implement.
+- Web app works without home server availability.
+
+Cons:
+
+- Hosting storage can be expensive.
+- 500 GB libraries may exceed hosting limits.
+
+Architecture B: Hosted PHP stores metadata, Pi stores large file bytes.
+
+Pros:
+
+- Cheap storage on home hard drive.
+- Good for huge audio/media libraries.
+
+Cons:
+
+- Remote access depends on home network availability.
+- Requires secure tunnel, relay, port forwarding, or background client connection.
+- Much bigger architecture change.
+
+Architecture C: Hosted PHP stores metadata, Backblaze stores file bytes.
+
+Pros:
+
+- Scales better than cheap web hosting.
+- Does not depend on home network uptime.
+
+Cons:
+
+- Requires cloud object storage credentials and API integration.
+- Web host still needs to proxy, sign, or coordinate file access.
+
+Recommended Phasing
+-------------------
+
+Phase 1: Device registry and local selective sync rules.
+
+- Keep current hosted PHP file storage.
+- Add server-side devices.json.
+- Add server-side sync_rules.json.
+- Register desktop/CLI/Android devices.
+- Desktop and CLI respect path rules.
+- Android stays stable, with minimal selective sync support added carefully.
+
+Phase 2: Better setup and management UI.
+
+- Desktop setup wizard for device registration and selective sync.
+- CLI setup wizard for Raspberry Pi.
+- Web UI device/rule management page.
+- Show per-device status.
+
+Phase 3: Raspberry Pi service mode.
+
+- Add systemd service install/start/stop/status.
+- Improve logs.
+- Validate external drive path and available space.
+- Support headless setup.
+
+Phase 4: Large-file improvements.
+
+- Stream uploads/downloads instead of buffering entire files.
+- Add resumable or chunked upload support.
+- Add better conflict handling across all clients.
+
+Phase 5: Alternate storage backends.
+
+- Define storage interface.
+- Keep local PHP storage as default.
+- Explore Backblaze B2.
+- Explore Raspberry Pi as a storage node.
+
+Immediate Engineering Tasks
+---------------------------
+
+1. Decide the metadata format for devices and sync rules.
+2. Add server API actions for device registration and rule retrieval.
+3. Update desktop CLI sync loop to filter paths through sync rules.
+4. Add CLI commands for Raspberry Pi setup and service management.
+5. Add desktop UI setup controls for choosing remote folders to sync.
+6. Add protected path filtering to Android before expanding Android sync behavior.
+7. Fix Android conflict handling before adding complex selective sync.
+8. Decide whether blank passwords are truly supported or passwords are always required.
+9. Add tests for rule inheritance and selective sync decisions.
+10. Add migration behavior for existing FreeCloud installs with no devices.json or sync_rules.json.
+
+Open Design Questions
+---------------------
+
+1. Should every user-visible path be browseable on every device, even if not synced?
+2. Should users manage sync rules mostly from the web app, from each device, or both?
+3. Should the Raspberry Pi be just another client, or eventually become a storage backend?
+4. How should a device recover if it loses its device_id?
+5. Should there be multiple users, or still one password/shared drive for now?
+6. Should rules be stored per user later if multi-user auth is added?
+7. How should conflicts be shown in Android and web UI?
+8. Should upload-only folders appear in the remote browser before first upload?
+9. How much of the current Android app should be preserved before any UI redesign?
+10. Is Backblaze a near-term requirement or a later storage-backend phase?

@@ -31,6 +31,12 @@ class FreeCloudApiClient(baseUrl: String, private val password: String) {
         return parseEntries(entries)
     }
 
+    fun metadataList(path: String): List<ManifestEntry> {
+        val data = requestJson("metadata_list", mapOf("path" to UrlTools.remotePath(path)))
+        val entries = data.optJSONArray("entries") ?: JSONArray()
+        return parseEntries(entries)
+    }
+
     fun mkdir(path: String) {
         requestJson("mkdir", mapOf("path" to UrlTools.remotePath(path)), method = "POST", body = ByteArray(0))
     }
@@ -52,6 +58,12 @@ class FreeCloudApiClient(baseUrl: String, private val password: String) {
             null,
         )
         return executeBytes(connection)
+    }
+
+    fun downloadUrl(path: String): String = apiUrl("download", mapOf("path" to UrlTools.remotePath(path)))
+
+    fun requestHeaders(): Map<String, String> {
+        return if (password.isEmpty()) emptyMap() else mapOf("X-FreeCloud-Password" to password)
     }
 
     fun delete(path: String) {
@@ -143,6 +155,22 @@ class FreeCloudApiClient(baseUrl: String, private val password: String) {
                 type = item.optString("type"),
                 size = item.optLong("size"),
                 mtime = item.optLong("mtime"),
+                locations = parseLocations(item.optJSONArray("locations")),
+            )
+        }
+        return out
+    }
+
+    private fun parseLocations(locations: JSONArray?): List<StorageLocation> {
+        if (locations == null) return emptyList()
+        val out = mutableListOf<StorageLocation>()
+        for (index in 0 until locations.length()) {
+            val item = locations.optJSONObject(index) ?: continue
+            out += StorageLocation(
+                kind = item.optString("kind"),
+                deviceId = item.optString("device_id"),
+                name = item.optString("name"),
+                available = item.optBoolean("available", true),
             )
         }
         return out

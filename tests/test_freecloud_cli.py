@@ -88,6 +88,101 @@ class FreeCloudCliTests(unittest.TestCase):
             self.assertFalse(legacy.exists())
             self.assertEqual(json.loads(destination.read_text(encoding="utf-8")), config)
 
+    def test_node_rule_manifest_maps_local_folder_to_remote_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "Book One").mkdir()
+            (root / "Book One" / "chapter1.mp3").write_bytes(b"audio")
+            (root / ".git").mkdir()
+            (root / ".git" / "config").write_text("secret", encoding="utf-8")
+
+            rule = cli.make_node_rule(str(root), "AudioBooks", "storage-only")
+            entries = cli.node_rule_manifest(rule)
+            by_path = {entry["path"]: entry for entry in entries}
+
+            self.assertIn("AudioBooks", by_path)
+            self.assertIn("AudioBooks/Book One", by_path)
+            self.assertIn("AudioBooks/Book One/chapter1.mp3", by_path)
+            self.assertNotIn("AudioBooks/.git/config", by_path)
+            self.assertEqual(by_path["AudioBooks/Book One/chapter1.mp3"]["type"], "file")
+            self.assertEqual(by_path["AudioBooks/Book One/chapter1.mp3"]["size"], 5)
+
+    def test_node_manifest_only_publishes_storage_provider_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            storage_root = Path(temp) / "storage"
+            browse_root = Path(temp) / "browse"
+            storage_root.mkdir()
+            browse_root.mkdir()
+            (storage_root / "kept.txt").write_text("kept", encoding="utf-8")
+            (browse_root / "ignored.txt").write_text("ignored", encoding="utf-8")
+
+            entries = cli.node_manifest(
+                [
+                    cli.make_node_rule(str(storage_root), "Storage", "storage_only"),
+                    cli.make_node_rule(str(browse_root), "Browse", "browse_only"),
+                ]
+            )
+
+            paths = {entry["path"] for entry in entries}
+            self.assertIn("Storage/kept.txt", paths)
+            self.assertNotIn("Browse/ignored.txt", paths)
+
+    def test_node_manifest_can_hash_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "file.txt").write_text("abc", encoding="utf-8")
+
+            entries = cli.node_manifest([cli.make_node_rule(str(root), "Docs", "upload_only")], include_hashes=True)
+            by_path = {entry["path"]: entry for entry in entries}
+
+            self.assertEqual(
+                by_path["Docs/file.txt"]["hash"],
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            )
+
+    def test_node_rules_convert_to_server_sync_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            rule = cli.make_node_rule(str(root), "./AudioBooks/../AudioBooks", "storage-only")
+
+            self.assertEqual(
+                cli.server_rules_from_node_rules([rule]),
+                [{"path": "AudioBooks", "mode": "storage_only", "recursive": True}],
+            )
+
+    def test_missing_publish_roots_detects_unmounted_storage_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            missing = str(Path(temp) / "missing-drive" / "Audiobooks")
+
+            self.assertEqual(
+                cli.missing_publish_roots(
+                    [{"local_path": missing, "remote_path": "Audiobooks", "mode": "storage_only"}]
+                ),
+                [missing],
+            )
+
+    def test_virtual_path_resolves_through_most_specific_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            broad = root / "broad"
+            specific = root / "specific"
+            broad.mkdir()
+            specific.mkdir()
+            rules = [
+                cli.make_node_rule(str(broad), "Audiobooks", "storage_only"),
+                cli.make_node_rule(str(specific), "Audiobooks/Book A", "storage_only"),
+            ]
+
+            self.assertEqual(
+                cli.local_path_for_virtual_path(rules, "Audiobooks/Book A/chapter.mp3"),
+                specific / "chapter.mp3",
+            )
+
+    def test_virtual_path_does_not_match_a_similar_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            rule = cli.make_node_rule(temp, "Audio", "storage_only")
+            self.assertIsNone(cli.local_path_for_virtual_path([rule], "Audiobooks/file.mp3"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -528,12 +528,12 @@ class FreeCloudUi:
         self.style_font_overrides: dict[str, tkfont.Font] = {}
         self.font_size_delta = self.load_font_size_delta()
 
-        root.title("FreeCloud Sync")
+        root.title("FreeCloud")
         root.geometry("1280x800")
         root.minsize(980, 640)
         root.configure(bg=COLORS["bg"])
 
-        self.status = tk.StringVar(value="Stopped")
+        self.status = tk.StringVar(value="Loading…")
         self.domain_var = tk.StringVar(value="https://www.example.com")
         self.drive_var = tk.StringVar(value="FreeCloud")
         self.local_var = tk.StringVar(value=str(Path.home() / "FreeCloud"))
@@ -542,13 +542,16 @@ class FreeCloudUi:
         self.saved_drive_var = tk.StringVar(value="Not saved yet")
         self.saved_server_var = tk.StringVar(value="Not saved yet")
         self.saved_local_var = tk.StringVar(value="Not saved yet")
-        self.sync_button_text = tk.StringVar(value="▶\nStart Sync")
+        self.sync_button_text = tk.StringVar(value="▶\nStart Full Sync")
         self.remote_path_var = tk.StringVar(value="Cloud path: /")
         self.files_empty_var = tk.StringVar(value="Loading cloud files...")
         self.current_remote_path = ""
         self.remote_back_stack: list[str] = []
         self.remote_forward_stack: list[str] = []
         self.remote_manifest_cache: list[dict[str, object]] = []
+        self.device_registry: list[dict[str, object]] = []
+        self.device_columns: list[dict[str, str]] = []
+        self.device_columns_signature: tuple[str, ...] = ()
         self.remote_manifest_refreshing = False
         self.remote_manifest_refresh_after_id: str | None = None
         self.remote_manifest_refresh_started_at = 0.0
@@ -636,8 +639,6 @@ class FreeCloudUi:
         startup_log(f"initial visibility set, saved_setup={has_saved_setup}")
         if has_saved_setup and self.file_browser_open:
             root.after(250, self.load_cached_files_after_startup)
-        if has_saved_setup:
-            root.after(3500, self.start_sync)
         if self.font_size_delta:
             self.apply_overall_font_size_step(self.font_size_delta)
         startup_log("FreeCloudUi init finished")
@@ -768,8 +769,8 @@ class FreeCloudUi:
         file_menu.add_command(label="Open Local Folder", command=self.open_local_folder)
         file_menu.add_command(label="View on Web", command=self.view_on_web)
         file_menu.add_separator()
-        file_menu.add_command(label="Run in Background", command=self.exit_keep_syncing)
-        file_menu.add_command(label="Sync Now", command=self.sync_once)
+        file_menu.add_command(label="Run Full Sync in Background", command=self.exit_keep_syncing)
+        file_menu.add_command(label="Full Sync Now", command=self.sync_once)
         file_menu.add_checkbutton(
             label="Run at Startup",
             variable=self.run_at_startup_var,
@@ -911,7 +912,7 @@ class FreeCloudUi:
                 [
                     "[Desktop Entry]",
                     "Type=Application",
-                    "Name=FreeCloud Sync",
+                    "Name=FreeCloud Full Sync",
                     "Comment=Start FreeCloud when you log in",
                     f"Exec={exec_text}{exec_args}",
                     "Icon=freecloud",
@@ -994,7 +995,7 @@ class FreeCloudUi:
         status_box = tk.Frame(header, bg=COLORS["panel"], highlightthickness=0)
         status_box.grid(row=0, column=2, sticky="e", padx=(14, 4))
         tk.Label(status_box, text="Status", bg=COLORS["panel"], fg=COLORS["ink"], font=("TkDefaultFont", 10, "bold")).pack(anchor="w")
-        self.header_status_label = tk.Label(status_box, textvariable=self.status, bg=COLORS["panel"], fg=COLORS["danger"], font=("TkDefaultFont", 18, "bold"))
+        self.header_status_label = tk.Label(status_box, textvariable=self.status, bg=COLORS["panel"], fg=COLORS["muted"], font=("TkDefaultFont", 12, "bold"))
         self.header_status_label.pack(anchor="w", pady=(3, 0))
 
     def build_setup_card(self, parent: tk.Widget) -> tk.Frame:
@@ -1133,9 +1134,9 @@ class FreeCloudUi:
         steps = (
             "Upload everything inside the Server folder to public_html/FreeCloud on your web host.",
             "Enter your FreeCloud website address, such as https://yourdomain.com/FreeCloud.",
-            "Choose the local folder you want to sync. The default is ~/FreeCloud.",
+            "Choose a local folder for files you download, edit, or manually sync. The default is ~/FreeCloud.",
             "Choose an optional password. On first connection, this becomes your FreeCloud password.",
-            "Click Connect to FreeCloud to finish setup and start syncing.",
+            "Click Connect to FreeCloud to finish setup and open the cloud browser.",
         )
         for index, text in enumerate(steps, start=1):
             tk.Label(
@@ -1373,8 +1374,13 @@ class FreeCloudUi:
             font=("TkDefaultFont", 10, "bold"),
         ).grid(row=2, column=0, sticky="ew")
 
+        tk.Frame(sidebar, bg=COLORS["line"], height=1).grid(row=3, column=0, sticky="ew", padx=10)
+        self.devices_sidebar = tk.Frame(sidebar, bg="#fbfdff")
+        self.devices_sidebar.grid(row=4, column=0, sticky="ew", padx=14, pady=(10, 8))
+        self.render_devices_sidebar()
+
         storage = tk.Frame(sidebar, bg="#fbfdff")
-        storage.grid(row=3, column=0, sticky="ew", padx=14, pady=(4, 14))
+        storage.grid(row=5, column=0, sticky="ew", padx=14, pady=(4, 14))
         storage.grid_columnconfigure(0, weight=1)
         tk.Label(
             storage,
@@ -1471,25 +1477,31 @@ class FreeCloudUi:
         self.files_tree.heading("size", text="Size", anchor="w")
         self.files_tree.heading("type", text="Type", anchor="w")
         self.files_tree.heading("modified", text="Modified", anchor="w")
-        self.files_tree.column("name", width=330, minwidth=180, stretch=True, anchor="w")
+        self.files_tree.column("name", width=300, minwidth=180, stretch=True, anchor="w")
         self.files_tree.column("size", width=90, minwidth=70, stretch=False, anchor="w")
-        self.files_tree.column("type", width=140, minwidth=100, stretch=False, anchor="w")
-        self.files_tree.column("modified", width=190, minwidth=150, stretch=False, anchor="w")
+        self.files_tree.column("type", width=120, minwidth=90, stretch=False, anchor="w")
+        self.files_tree.column("modified", width=170, minwidth=140, stretch=False, anchor="w")
         self.files_tree.grid(row=0, column=0, sticky="nsew")
         self.files_tree.bind("<ButtonPress-1>", self.on_file_tree_button_press)
         self.files_tree.bind("<B1-Motion>", self.on_file_tree_drag_motion)
         self.files_tree.bind("<ButtonRelease-1>", self.on_file_tree_button_release)
         self.files_tree.bind("<Double-1>", self.open_file_tree_item)
         self.files_tree.bind("<Button-3>", self.show_file_tree_item_menu)
+        self.files_tree.bind("<<TreeviewSelect>>", self.update_selected_file_details)
 
         files_scrollbar = styled_scrollbar(list_shell, tk.VERTICAL, self.files_tree.yview, width=16)
         files_scrollbar.grid(row=0, column=1, sticky="ns")
         self.files_tree.configure(yscrollcommand=files_scrollbar.set)
+        files_xscrollbar = styled_scrollbar(list_shell, tk.HORIZONTAL, self.files_tree.xview, width=12)
+        files_xscrollbar.grid(row=1, column=0, sticky="ew")
+        self.files_tree.configure(xscrollcommand=files_xscrollbar.set)
 
         self.files_footer_var = tk.StringVar(value="")
+        self.selection_detail_var = tk.StringVar(value="")
         footer = tk.Frame(card, bg=COLORS["panel"])
         footer.pack(fill=tk.X, padx=8, pady=(0, 6))
         tk.Label(footer, textvariable=self.files_footer_var, bg=COLORS["panel"], fg=COLORS["muted"], font=("TkDefaultFont", 9)).pack(side=tk.LEFT)
+        tk.Label(footer, textvariable=self.selection_detail_var, bg=COLORS["panel"], fg=COLORS["muted"], font=("TkDefaultFont", 9)).pack(side=tk.RIGHT)
 
         self.render_remote_tree()
         return card
@@ -1541,17 +1553,16 @@ class FreeCloudUi:
         )
         self.view_web_button.pack(side=tk.LEFT, padx=(0, button_gap))
 
-        self.sync_button = self.make_action_button(
+        self.refresh_button = self.make_action_button(
             card,
-            "▶\nStart Sync",
-            self.toggle_sync,
+            "⟳\nRefresh",
+            lambda: self.refresh_files(force_live=True),
             "#fbfdff",
-            COLORS["success"],
+            COLORS["accent_dark"],
             width=button_width,
             height=60,
         )
-        self.sync_button.configure(textvariable=self.sync_button_text)
-        self.sync_button.pack(side=tk.LEFT, padx=(0, button_gap))
+        self.refresh_button.pack(side=tk.LEFT, padx=(0, button_gap))
 
         self.settings_button = self.make_action_button(
             card,
@@ -1563,17 +1574,6 @@ class FreeCloudUi:
             height=60,
         )
         self.settings_button.pack(side=tk.LEFT, padx=(0, button_gap))
-
-        self.exit_button = self.make_action_button(
-            card,
-            "▣\nRun in Background",
-            self.exit_keep_syncing,
-            "#fbfdff",
-            COLORS["ink"],
-            width=button_width,
-            height=60,
-        )
-        self.exit_button.pack(side=tk.LEFT)
 
         return card
 
@@ -1788,6 +1788,9 @@ class FreeCloudUi:
         if not isinstance(entries, list):
             return False
         self.remote_manifest_cache = [entry for entry in entries if isinstance(entry, dict)]
+        devices = data.get("devices")
+        if isinstance(devices, list):
+            self.device_registry = [device for device in devices if isinstance(device, dict)]
         return bool(self.remote_manifest_cache)
 
     def cached_remote_tree_entries(self, base_url: str) -> list[dict[str, object]]:
@@ -1801,6 +1804,15 @@ class FreeCloudUi:
             return []
         return [entry for entry in entries if isinstance(entry, dict)]
 
+    def cached_devices(self, base_url: str) -> list[dict[str, object]]:
+        data = load_json(REMOTE_TREE_CACHE_PATH)
+        if str(data.get("base_url") or "") != base_url:
+            return []
+        devices = data.get("devices")
+        if not isinstance(devices, list):
+            return []
+        return [device for device in devices if isinstance(device, dict)]
+
     def load_cached_files_after_startup(self) -> None:
         startup_log("cache load scheduled task started")
         base_url = str(self.config_data().get("base_url") or "")
@@ -1811,16 +1823,25 @@ class FreeCloudUi:
         def worker() -> None:
             started_at = time.perf_counter()
             entries = self.cached_remote_tree_entries(base_url)
+            devices = self.cached_devices(base_url)
             elapsed = time.perf_counter() - started_at
             startup_log(f"cache file read on worker, entries={len(entries)}, elapsed={elapsed:.3f}s")
-            self.root.after(0, lambda: self.finish_cached_files_after_startup(entries))
+            self.root.after(0, lambda: self.finish_cached_files_after_startup(entries, devices))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def finish_cached_files_after_startup(self, entries: list[dict[str, object]]) -> None:
+    def finish_cached_files_after_startup(
+        self,
+        entries: list[dict[str, object]],
+        devices: list[dict[str, object]],
+    ) -> None:
         startup_log(f"cache load finish on UI thread, entries={len(entries)}")
+        self.device_registry = devices
+        self.configure_device_columns()
         if entries:
             self.remote_manifest_cache = entries
+            self.status.set("Cached")
+            self.header_status_label.configure(fg=COLORS["muted"])
             self.update_storage_display(None)
             self.render_cached_files_on_startup()
             self.schedule_folder_refresh(5000)
@@ -1838,7 +1859,104 @@ class FreeCloudUi:
                 "base_url": str(config.get("base_url") or ""),
                 "drive_name": str(config.get("drive_name") or "FreeCloud"),
                 "entries": self.remote_manifest_cache,
+                "devices": self.device_registry,
             },
+        )
+
+    def placement_providers(self) -> list[dict[str, str]]:
+        providers = [{"key": "local", "label": "This Computer", "kind": "local", "device_id": ""}]
+        seen_ids = set()
+        for device in sorted(self.device_registry, key=lambda item: str(item.get("name") or "").lower()):
+            device_id = str(device.get("device_id") or "").strip()
+            if not device_id or device_id in seen_ids:
+                continue
+            seen_ids.add(device_id)
+            providers.append(
+                {
+                    "key": f"device_{len(providers)}",
+                    "label": str(device.get("name") or device_id),
+                    "kind": "device",
+                    "device_id": device_id,
+                }
+            )
+        providers.append({"key": "web_server", "label": "Web Server", "kind": "web_server", "device_id": ""})
+        return providers
+
+    def configure_device_columns(self) -> None:
+        providers = self.placement_providers()
+        signature = tuple(f"{item['key']}:{item['device_id']}:{item['label']}" for item in providers)
+        if signature == self.device_columns_signature:
+            return
+        self.device_columns = providers
+        self.device_columns_signature = signature
+        columns = ("name", "size", "type", *(item["key"] for item in providers), "modified")
+        self.files_tree.configure(columns=columns)
+        for item in providers:
+            key = item["key"]
+            self.files_tree.heading(key, text=item["label"], anchor="center")
+            self.files_tree.column(key, width=112, minwidth=88, stretch=False, anchor="center")
+        self.render_devices_sidebar()
+        self.last_rendered_folder_key = ""
+
+    def device_is_online(self, device: dict[str, object]) -> bool:
+        try:
+            last_seen = int(device.get("last_seen_at") or 0)
+        except (TypeError, ValueError):
+            last_seen = 0
+        return bool(device.get("online", False)) and last_seen >= int(time.time()) - 180
+
+    def render_devices_sidebar(self) -> None:
+        container = getattr(self, "devices_sidebar", None)
+        if container is None:
+            return
+        for child in container.winfo_children():
+            child.destroy()
+        tk.Label(
+            container,
+            text="Devices",
+            bg="#fbfdff",
+            fg=COLORS["ink"],
+            anchor="w",
+            font=("TkDefaultFont", 9, "bold"),
+        ).pack(fill=tk.X, pady=(0, 5))
+        rows: list[tuple[str, bool]] = [("This Computer", True)]
+        rows.extend(
+            (str(device.get("name") or device.get("device_id") or "Device"), self.device_is_online(device))
+            for device in sorted(self.device_registry, key=lambda item: str(item.get("name") or "").lower())
+        )
+        rows.append(("Web Server", self.status.get() != "Offline"))
+        for name, online in rows:
+            row = tk.Frame(container, bg="#fbfdff")
+            row.pack(fill=tk.X, pady=1)
+            tk.Label(
+                row,
+                text="●" if online else "○",
+                bg="#fbfdff",
+                fg=COLORS["success"] if online else "#95a2ae",
+                font=("TkDefaultFont", 9),
+            ).pack(side=tk.LEFT)
+            tk.Label(row, text=name, bg="#fbfdff", fg=COLORS["ink"], anchor="w", font=("TkDefaultFont", 9)).pack(side=tk.LEFT, padx=(5, 0))
+
+    def entry_on_provider(self, entry: dict[str, object], provider: dict[str, str]) -> bool:
+        if provider["kind"] == "local":
+            local_root = str(self.config_data().get("local_root") or "").strip()
+            if not local_root:
+                return False
+            return (Path(local_root).expanduser() / cli.remote_path(str(entry.get("path") or ""))).exists()
+        locations = entry.get("locations")
+        if provider["kind"] == "web_server":
+            if not isinstance(locations, list) or not locations:
+                return True
+            return any(
+                isinstance(location, dict) and str(location.get("kind") or "") == "web_server"
+                for location in locations
+            )
+        if not isinstance(locations, list):
+            return False
+        return any(
+            isinstance(location, dict)
+            and str(location.get("device_id") or "") == provider["device_id"]
+            for location in locations
         )
 
     def entries_for_folder(self, folder_path: str) -> list[dict[str, object]]:
@@ -1984,6 +2102,7 @@ class FreeCloudUi:
         self.up_button.configure(state=tk.NORMAL if self.current_remote_path else tk.DISABLED)
         self.back_button.configure(state=tk.NORMAL if self.remote_back_stack else tk.DISABLED)
         self.forward_button.configure(state=tk.NORMAL if self.remote_forward_stack else tk.DISABLED)
+        self.configure_device_columns()
         self.render_remote_entries(self.entries_for_folder(self.current_remote_path))
         self.render_remote_tree()
         startup_log(
@@ -2093,6 +2212,9 @@ class FreeCloudUi:
             return
         self.remote_manifest_refresh_after_id = None
         self.remote_manifest_refreshing = True
+        self.status.set("Syncing…")
+        self.header_status_label.configure(fg=COLORS["accent_dark"])
+        self.render_devices_sidebar()
         self.remote_manifest_refresh_started_at = time.perf_counter()
         folder_path = self.current_remote_path
         had_cached_entries = bool(self.entries_for_folder(folder_path))
@@ -2101,11 +2223,22 @@ class FreeCloudUi:
         def worker() -> None:
             try:
                 client = self.current_client()
-                entries = client.list(folder_path)
+                try:
+                    entries = client.metadata_list(folder_path)
+                except cli.FreeCloudApiError as exc:
+                    if exc.code != 400:
+                        raise
+                    entries = client.list(folder_path)
+                try:
+                    device_response = client.request("list_devices")
+                    raw_devices = device_response.get("devices", []) if isinstance(device_response, dict) else []
+                    devices = [device for device in raw_devices if isinstance(device, dict)] if isinstance(raw_devices, list) else []
+                except Exception:
+                    devices = self.device_registry
             except Exception as exc:
                 self.root.after(0, lambda: self.finish_folder_refresh_error(exc, show_errors))
                 return
-            self.root.after(0, lambda: self.finish_folder_refresh(folder_path, entries, had_cached_entries, show_errors))
+            self.root.after(0, lambda: self.finish_folder_refresh(folder_path, entries, devices, had_cached_entries, show_errors))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -2138,6 +2271,7 @@ class FreeCloudUi:
         self,
         folder_path: str,
         entries: list[dict[str, object]],
+        devices: list[dict[str, object]],
         had_cached_entries: bool = False,
         show_errors: bool = False,
     ) -> None:
@@ -2145,18 +2279,31 @@ class FreeCloudUi:
         if had_cached_entries and not entries and not show_errors:
             elapsed = time.perf_counter() - self.remote_manifest_refresh_started_at if self.remote_manifest_refresh_started_at else 0
             startup_log(f"ignored empty background folder refresh, path=/{folder_path}, elapsed={elapsed:.3f}s")
+            self.device_registry = devices
+            self.configure_device_columns()
+            self.status.set("Up to date")
+            self.header_status_label.configure(fg=COLORS["success"])
+            self.render_devices_sidebar()
             return
+        self.device_registry = devices
+        self.configure_device_columns()
         self.replace_cached_folder_entries(folder_path, entries)
         if cli.remote_path(folder_path) == self.current_remote_path:
             self.render_current_folder_from_cache()
         elapsed = time.perf_counter() - self.remote_manifest_refresh_started_at if self.remote_manifest_refresh_started_at else 0
         self.append(f"Updated current folder in {elapsed:.2f}s.\n")
+        self.status.set("Up to date")
+        self.header_status_label.configure(fg=COLORS["success"])
+        self.render_devices_sidebar()
         startup_log(f"live folder refresh finished, path=/{folder_path}, entries={len(entries)}, elapsed={elapsed:.3f}s")
         threading.Thread(target=self.save_remote_tree_cache, daemon=True).start()
         self.schedule_storage_refresh()
 
     def finish_folder_refresh_error(self, exc: Exception, show_error: bool) -> None:
         self.remote_manifest_refreshing = False
+        self.status.set("Offline")
+        self.header_status_label.configure(fg="#7f8b96")
+        self.render_devices_sidebar()
         startup_log(f"live folder refresh error: {exc}")
         if show_error:
             messagebox.showerror("FreeCloud Files", str(exc))
@@ -2226,6 +2373,7 @@ class FreeCloudUi:
             canvas.create_rectangle(0, 0, fill_width, height, fill=COLORS["accent"], outline="")
 
     def render_remote_entries(self, entries: list[dict[str, object]]) -> None:
+        self.configure_device_columns()
         folder_key_parts = []
         for entry in entries:
             folder_key_parts.append(
@@ -2235,6 +2383,7 @@ class FreeCloudUi:
                         str(entry.get("type") or ""),
                         str(entry.get("size") or ""),
                         str(entry.get("mtime") or ""),
+                        *("1" if self.entry_on_provider(entry, provider) else "0" for provider in self.device_columns),
                     )
                 )
             )
@@ -2247,10 +2396,15 @@ class FreeCloudUi:
         if existing_items:
             self.files_tree.delete(*existing_items)
         self.file_tree_entries = {}
+        self.selection_detail_var.set("")
 
         if not entries:
             self.files_empty_var.set("This cloud folder is empty.")
-            self.files_tree.insert("", "end", values=("This cloud folder is empty.", "", "", ""))
+            self.files_tree.insert(
+                "",
+                "end",
+                values=("This cloud folder is empty.", "", "", *("" for _ in self.device_columns), ""),
+            )
             self.files_footer_var.set("0 items")
             return
 
@@ -2267,6 +2421,7 @@ class FreeCloudUi:
                     f"{self.file_kind_badge(name, is_dir)}  {name}",
                     "—" if is_dir else self.format_bytes(int(entry.get("size") or 0)),
                     "Folder" if is_dir else self.file_type_label(name),
+                    *("☑" if self.entry_on_provider(entry, provider) else "□" for provider in self.device_columns),
                     self.format_mtime(entry.get("mtime")),
                 ),
             )
@@ -2285,6 +2440,16 @@ class FreeCloudUi:
         self.drag_start_xy = (event.x_root, event.y_root)
         self.drag_active = False
         self.drag_source_widget = self.files_tree
+
+    def update_selected_file_details(self, _event: tk.Event[tk.Misc] | None = None) -> None:
+        selected = self.files_tree.selection()
+        entry = self.file_tree_entries.get(selected[0]) if selected else None
+        if entry is None:
+            self.selection_detail_var.set("")
+            return
+        placements = [provider["label"] for provider in self.device_columns if self.entry_on_provider(entry, provider)]
+        name = str(entry.get("name") or entry.get("path") or "")
+        self.selection_detail_var.set(f"{name}  ·  {', '.join(placements) if placements else 'No available copy'}")
 
     def on_file_tree_drag_motion(self, event: tk.Event[tk.Misc]) -> None:
         self.on_remote_drag_motion(event)
@@ -2561,7 +2726,7 @@ class FreeCloudUi:
     def show_about(self) -> None:
         messagebox.showinfo(
             "About FreeCloud",
-            f"FreeCloud Sync {cli.VERSION}\n\nYour hosting. Your cloud. Always in sync.",
+            f"FreeCloud Sync {cli.VERSION}\n\nYour hosting. Your cloud. Browse first, sync what you choose.",
         )
 
     def show_remote_item_menu(self, path: str, name: str, is_dir: bool) -> None:
@@ -2591,6 +2756,14 @@ class FreeCloudUi:
         if not base_url:
             messagebox.showerror("FreeCloud Files", "Save setup before downloading cloud files.")
             return
+        entry = self.remote_entry_for_path(path)
+        if entry is not None and not self.entry_has_web_server_location(entry):
+            messagebox.showinfo(
+                "Download",
+                "This item is listed in FreeCloud metadata, but it is not stored on the web server yet.\n\n"
+                "On-demand downloads from storage nodes will be added in the next transfer step.",
+            )
+            return
 
         default_name = f"{name}.zip" if is_dir else name
         target_path = filedialog.asksaveasfilename(
@@ -2611,6 +2784,13 @@ class FreeCloudUi:
             self.append(f"Downloaded remote item: {path} -> {target_path}\n")
         except Exception as exc:
             messagebox.showerror("FreeCloud Files", str(exc))
+
+    def remote_entry_for_path(self, path: str) -> dict[str, object] | None:
+        clean_path = cli.remote_path(path)
+        for entry in self.remote_manifest_cache:
+            if cli.remote_path(str(entry.get("path") or "")) == clean_path:
+                return entry
+        return None
 
     def open_local_file(self, remote_path: str, name: str) -> None:
         config = self.config_data()
@@ -2645,6 +2825,54 @@ class FreeCloudUi:
             if child in exclude:
                 continue
             self.bind_row_open(child, command)
+
+    @staticmethod
+    def available_from_label(entry: dict[str, object]) -> str:
+        locations = entry.get("locations")
+        if not isinstance(locations, list) or not locations:
+            return "Web Server"
+
+        labels = []
+        seen = set()
+        for location in locations:
+            if not isinstance(location, dict):
+                continue
+            if not bool(location.get("available", True)):
+                continue
+            kind = str(location.get("kind") or "")
+            name = str(location.get("name") or "").strip()
+            device_id = str(location.get("device_id") or "")
+            if kind == "web_server":
+                label = "Web Server"
+            elif name:
+                label = name
+            elif device_id:
+                label = device_id
+            elif kind:
+                label = kind.replace("_", " ").title()
+            else:
+                continue
+            if label not in seen:
+                seen.add(label)
+                labels.append(label)
+
+        if not labels:
+            return "Unavailable"
+        if len(labels) <= 2:
+            return ", ".join(labels)
+        return f"{labels[0]}, +{len(labels) - 1} more"
+
+    @staticmethod
+    def entry_has_web_server_location(entry: dict[str, object]) -> bool:
+        locations = entry.get("locations")
+        if not isinstance(locations, list) or not locations:
+            return True
+        for location in locations:
+            if not isinstance(location, dict):
+                continue
+            if str(location.get("kind") or "") == "web_server" and bool(location.get("available", True)):
+                return True
+        return False
 
     def file_kind_badge(self, name: str, is_dir: bool) -> str:
         if is_dir:
@@ -2733,21 +2961,7 @@ class FreeCloudUi:
         self.output.configure(state=tk.DISABLED)
 
     def set_running(self, running: bool) -> None:
-        self.status.set("Running" if running else "Stopped")
-        status_color = COLORS["success"] if running else COLORS["danger"]
-        for label_name in ("header_status_label",):
-            label = getattr(self, label_name, None)
-            if label is not None:
-                label.configure(fg=status_color)
-        self.sync_button_text.set("🛑\nStop Sync" if running else "▶\nStart Sync")
-        self.sync_button.configure(
-            bg="#f3dede" if running else "#fbfdff",
-            fg=COLORS["danger"] if running else COLORS["success"],
-            activebackground="#ecd0d0" if running else COLORS["button_light_hover"],
-            activeforeground=COLORS["danger"] if running else COLORS["success"],
-            highlightbackground="#f3dede" if running else "#fbfdff",
-            highlightcolor="#f3dede" if running else "#fbfdff",
-        )
+        self.sync_button_text.set("🛑\nStop Full Sync" if running else "▶\nStart Full Sync")
 
     def save_setup(self) -> None:
         self.setup_button.configure(state=tk.DISABLED)
@@ -2814,8 +3028,7 @@ class FreeCloudUi:
             self.editing_settings = False
             self.refresh_setup_visibility()
             self.schedule_files_refresh()
-            self.append("Starting automatically...\n")
-            self.start_sync()
+            self.append("Connected. Cloud browser is ready.\n")
         except Exception as exc:
             messagebox.showerror("FreeCloud Setup", str(exc))
         finally:

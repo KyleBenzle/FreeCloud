@@ -49,5 +49,40 @@ class FontSizeTests(unittest.TestCase):
             self.assertEqual(FreeCloudUi.load_font_size_delta(), 0)
 
 
+class AvailableFromLabelTests(unittest.TestCase):
+    def test_missing_locations_defaults_to_web_server(self) -> None:
+        self.assertEqual(FreeCloudUi.available_from_label({}), "Web Server")
+
+    def test_location_label_prefers_device_name(self) -> None:
+        self.assertEqual(
+            FreeCloudUi.available_from_label(
+                {
+                    "locations": [
+                        {"kind": "local_node", "device_id": "pi-1", "name": "Raspberry Pi", "available": True}
+                    ]
+                }
+            ),
+            "Raspberry Pi",
+        )
+
+    def test_unavailable_locations_are_marked_unavailable(self) -> None:
+        self.assertEqual(
+            FreeCloudUi.available_from_label(
+                {"locations": [{"kind": "local_node", "device_id": "pi-1", "available": False}]}
+            ),
+            "Unavailable",
+        )
+
+    def test_missing_locations_are_treated_as_web_server_files(self) -> None:
+        self.assertTrue(FreeCloudUi.entry_has_web_server_location({}))
+
+    def test_pi_only_location_is_not_treated_as_web_server_file(self) -> None:
+        self.assertFalse(
+            FreeCloudUi.entry_has_web_server_location(
+                {"locations": [{"kind": "local_node", "device_id": "pi-1", "name": "Raspberry Pi"}]}
+            )
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

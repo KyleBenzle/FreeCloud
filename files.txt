@@ -1,0 +1,144 @@
+FreeCloud project file map
+==========================
+
+FreeCloud/
+|-- README.md                         Main project documentation and architecture
+|-- PROJECT_NOTES.md                  Older full-sync implementation notes
+|-- MANAGER_OVERVIEW.md               Short planning/manager handoff
+|-- Todo.txt                          Selective-sync roadmap and design notes
+|-- LICENSE                           GNU GPL v3-or-later license
+|-- .gitignore                        Generated, local, and secret-file exclusions
+|-- freecloud_cli.py                  CLI, sync engine, and Linux/Pi node commands
+|-- freecloud_ui.py                   Linux/macOS Tk desktop application
+|-- Run_Mac_Linux.sh                  Linux/macOS development launcher
+|-- Run_Windows.bat                   Windows launcher
+|-- FreeCloud.desktop                 Desktop-menu launcher definition
+|-- FClogo.png                        Project logo asset
+|-- logo.png                          General logo asset
+|-- icon.png                          General application icon
+|-- favicon.ico                       General browser icon
+|-- action.png                        General screenshot/artwork asset
+|-- rejected.png                      Local submission/rejection screenshot
+|
+|-- server/                           PHP web application and central API
+|   |-- index.php                     Web entry point
+|   |-- freecloud.php                 Browser-based drive/file manager
+|   |-- freecloud_api.php             Client, sync, device, and metadata API
+|   |-- freecloud_download.php        File and ZIP downloads
+|   |-- freecloud_preview.php         Inline previews and media range streaming
+|   |-- freecloud_transfer.php        Temporary node-transfer web downloads
+|   |-- .htaccess                     Apache access/security configuration
+|   |-- logo.png                      Hosted UI logo
+|   |-- icon.png                      Hosted UI icon
+|   `-- favicon.ico                   Hosted UI favicon
+|
+|-- android-app/                      Native Android application
+|   |-- README.md                     Android behavior, setup, and limitations
+|   |-- PLAY_STORE_SUBMISSION.md      Play Store release/submission notes
+|   |-- build.gradle.kts              Top-level Android build plugins
+|   |-- settings.gradle.kts           Gradle project settings
+|   |-- gradle.properties             Gradle runtime settings
+|   |-- gradlew                       Unix Gradle wrapper launcher
+|   |-- gradlew.bat                   Windows Gradle wrapper launcher
+|   |-- gradle/wrapper/
+|   |   |-- gradle-wrapper.jar
+|   |   `-- gradle-wrapper.properties
+|   `-- app/
+|       |-- build.gradle.kts          App SDK, version, and dependencies
+|       |-- proguard-rules.pro        Release shrinking/obfuscation rules
+|       |-- release/app-release.aab   Generated Android release bundle
+|       `-- src/
+|           |-- main/
+|           |   |-- AndroidManifest.xml
+|           |   |-- java/com/freecloud/android/
+|           |   |   |-- MainActivity.kt          Main setup/browser/media UI
+|           |   |   |-- FreeCloudApiClient.kt    HTTP API client
+|           |   |   |-- Models.kt                Shared Android data models
+|           |   |   |-- ConfigStore.kt           Encrypted saved configuration
+|           |   |   |-- DocumentTreeSync.kt      Storage Access Framework I/O
+|           |   |   |-- SyncEngine.kt            Legacy sync comparison engine
+|           |   |   |-- SyncService.kt           Foreground background-sync service
+|           |   |   |-- SyncRuntime.kt           Runtime sync state
+|           |   |   |-- SyncStateStore.kt        Persistent sync state
+|           |   |   |-- SyncedFilesAdapter.kt    File-list RecyclerView adapter
+|           |   |   |-- PlaybackStateStore.kt    Saved media playback position
+|           |   |   |-- FileEditorActivity.kt    Local text-file editor
+|           |   |   |-- BootReceiver.kt          Optional boot-time service restart
+|           |   |   `-- UrlTools.kt              Server URL normalization
+|           |   `-- res/
+|           |       |-- layout/                   Main, editor, and file-row layouts
+|           |       |-- drawable/                 Backgrounds, icons, and badges
+|           |       |-- drawable-nodpi/           Unscaled logo asset
+|           |       |-- menu/                     File-browser menu
+|           |       |-- values/                   Colors, strings, and themes
+|           |       `-- xml/                      Backup and FileProvider rules
+|           `-- test/java/com/freecloud/android/
+|               `-- UrlToolsTest.kt               Android URL helper unit tests
+|
+|-- tests/                             Python desktop/CLI unit tests
+|   |-- test_freecloud_cli.py
+|   `-- test_tray_activation.py
+|
+|-- website/                           Public marketing and download website
+|   |-- index.html
+|   |-- privacy.html
+|   |-- FreeCloud.zip                  Published downloadable project archive
+|   |-- logo.png
+|   |-- logo_small.png
+|   |-- icon.png
+|   |-- favicon.ico
+|   |-- action.png
+|   |-- Phone_action.png
+|   |-- Phone_setup.png
+|   |-- Setup0.png
+|   |-- Setup1.png
+|   `-- Setup2.png
+|
+|-- packaging/
+|   |-- linux/                         Installed launchers, man pages, and metadata
+|   |   |-- freecloud
+|   |   |-- freecloud-cli
+|   |   |-- freecloud.1
+|   |   |-- freecloud-cli.1
+|   |   |-- freecloud.desktop
+|   |   `-- io.github.kylebenzle.freecloud.metainfo.xml
+|   `-- submissions/                   Distribution-submission documentation
+|       |-- README.md
+|       |-- debian-rfs.txt
+|       |-- debian-wnpp-itp.txt
+|       |-- ubuntu-needs-packaging.txt
+|       |-- snap-store.md
+|       `-- dput.cf
+|
+|-- debian/                            Debian source-package configuration
+|   |-- changelog
+|   |-- control
+|   |-- copyright
+|   |-- rules
+|   |-- watch
+|   |-- source/format
+|   |-- tests/control
+|   |-- tests/smoke
+|   `-- upstream/metadata
+|
+`-- snap/                              Snap package configuration
+    |-- snapcraft.yaml
+    |-- gui/
+    |   |-- freecloud.desktop
+    |   `-- freecloud.png
+    `-- local/
+        |-- freecloud-snap
+        `-- freecloud-cli-snap
+
+Intentionally omitted
+---------------------
+
+- .git/, .agents/, and .codex/ internal tooling data
+- Python and test __pycache__/ directories
+- Gradle caches and Android build intermediates
+- Debian and dist build output
+- IDE workspace/cache state under android-app/.idea/
+- android-app/local.properties (machine-local Android SDK path)
+- freecloud_keystore.jks and other signing keys
+- freecloud_2.1.1_amd64.snap and similar generated packages
+- Runtime server configuration, sessions, stored files, and metadata

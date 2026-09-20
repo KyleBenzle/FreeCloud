@@ -29,6 +29,7 @@ class ConfigStore(context: Context) {
             treeUri = treeUri,
             intervalSeconds = prefs.getInt("interval_seconds", 30),
             deleteRemote = prefs.getBoolean("delete_remote", false),
+            autoSync = prefs.getBoolean("auto_sync", false),
         )
     }
 
@@ -40,6 +41,7 @@ class ConfigStore(context: Context) {
             .putString("tree_uri", config.treeUri)
             .putInt("interval_seconds", config.intervalSeconds)
             .putBoolean("delete_remote", config.deleteRemote)
+            .putBoolean("auto_sync", config.autoSync)
             .remove(LEGACY_PASSWORD_KEY)
             .apply()
         savePassword(config.password)

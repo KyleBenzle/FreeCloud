@@ -6,9 +6,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.SpannableString
 import android.text.SpannableStringBuilder
 import android.text.method.ScrollingMovementMethod
@@ -23,6 +26,7 @@ import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.VideoView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.OnBackPressedCallback
@@ -35,6 +39,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var configStore: ConfigStore
     private lateinit var documentTreeSync: DocumentTreeSync
     private lateinit var syncStateStore: SyncStateStore
+    private lateinit var playbackStateStore: PlaybackStateStore
 
     private lateinit var setupCard: LinearLayout
     private lateinit var runningCard: LinearLayout
@@ -48,6 +53,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var localFolderValue: TextView
     private lateinit var currentFolderText: TextView
     private lateinit var fileCountText: TextView
+    private lateinit var playerSection: LinearLayout
+    private lateinit var nowPlayingText: TextView
+    private lateinit var playerProgressText: TextView
+    private lateinit var videoPlayerView: VideoView
+    private lateinit var playPauseButton: Button
+    private lateinit var restartButton: Button
+    private lateinit var nextButton: Button
     private lateinit var emptyFilesText: TextView
     private lateinit var filesRecyclerView: LinearLayout
     private lateinit var activitySection: LinearLayout
@@ -59,10 +71,23 @@ class MainActivity : AppCompatActivity() {
     private var selectedTreeUri: Uri? = null
     private var statusReceiverRegistered = false
     private var currentFolderPath: String = ""
+    private var currentPlayablePath: String = ""
+    private var currentPlayableFolder: String = ""
+    private var currentIsVideo: Boolean = false
+    private var audioPlayer: MediaPlayer? = null
+    private val progressHandler = Handler(Looper.getMainLooper())
+    private val progressTicker = object : Runnable {
+        override fun run() {
+            updatePlayerProgress()
+            progressHandler.postDelayed(this, 1_000)
+        }
+    }
     @Volatile
     private var cachedLocalNodes: Map<String, LocalNode> = emptyMap()
     @Volatile
     private var cachedRemoteState: Map<String, ManifestEntry> = emptyMap()
+    @Volatile
+    private var cachedFolderEntries: List<ManifestEntry> = emptyList()
     @Volatile
     private var refreshInFlight = false
 
@@ -88,7 +113,6 @@ class MainActivity : AppCompatActivity() {
 
     private val editorLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         refreshFileList(forceRescan = true)
-        SyncService.start(this)
     }
 
     private val statusReceiver = object : BroadcastReceiver() {
@@ -112,6 +136,7 @@ class MainActivity : AppCompatActivity() {
         configStore = ConfigStore(this)
         documentTreeSync = DocumentTreeSync(this)
         syncStateStore = SyncStateStore(this)
+        playbackStateStore = PlaybackStateStore(this)
         bindViews()
         wireActions()
         requestNotificationPermissionIfNeeded()
@@ -123,7 +148,6 @@ class MainActivity : AppCompatActivity() {
             populateFromConfig(config)
             showRunningCard()
             refreshFileList(forceRescan = true)
-            SyncService.start(this)
         } else {
             showSetupCard()
         }
@@ -137,11 +161,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onStop() {
+        saveCurrentPlaybackPosition()
         if (statusReceiverRegistered) {
             unregisterReceiver(statusReceiver)
             statusReceiverRegistered = false
         }
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        progressHandler.removeCallbacks(progressTicker)
+        audioPlayer?.release()
+        audioPlayer = null
+        videoPlayerView.stopPlayback()
+        super.onDestroy()
     }
 
     private fun bindViews() {
@@ -157,6 +190,13 @@ class MainActivity : AppCompatActivity() {
         localFolderValue = findViewById(R.id.localFolderValue)
         currentFolderText = findViewById(R.id.currentFolderText)
         fileCountText = findViewById(R.id.fileCountText)
+        playerSection = findViewById(R.id.playerSection)
+        nowPlayingText = findViewById(R.id.nowPlayingText)
+        playerProgressText = findViewById(R.id.playerProgressText)
+        videoPlayerView = findViewById(R.id.videoPlayerView)
+        playPauseButton = findViewById(R.id.playPauseButton)
+        restartButton = findViewById(R.id.restartButton)
+        nextButton = findViewById(R.id.nextButton)
         emptyFilesText = findViewById(R.id.emptyFilesText)
         filesRecyclerView = findViewById(R.id.filesRecyclerView)
         activitySection = findViewById(R.id.activitySection)
@@ -177,9 +217,12 @@ class MainActivity : AppCompatActivity() {
         upFolderButton.setOnClickListener {
             if (currentFolderPath.isBlank()) return@setOnClickListener
             currentFolderPath = currentFolderPath.substringBeforeLast('/', "")
-            renderCurrentFolderFromCache()
+            refreshFileList(forceRescan = true)
         }
         menuButton.setOnClickListener { showOverflowMenu() }
+        playPauseButton.setOnClickListener { togglePlayback() }
+        restartButton.setOnClickListener { seekToStart() }
+        nextButton.setOnClickListener { playNextInFolder() }
     }
 
     private fun registerBackHandler() {
@@ -187,7 +230,7 @@ class MainActivity : AppCompatActivity() {
             override fun handleOnBackPressed() {
                 if (runningCard.visibility == View.VISIBLE && currentFolderPath.isNotBlank()) {
                     currentFolderPath = currentFolderPath.substringBeforeLast('/', "")
-                    renderCurrentFolderFromCache()
+                    refreshFileList(forceRescan = true)
                     return
                 }
                 isEnabled = false
@@ -243,7 +286,6 @@ class MainActivity : AppCompatActivity() {
                     saveSetupButton.isEnabled = true
                     appendLog("Saved setup for ${config.baseUrl}")
                     refreshFileList(forceRescan = true)
-                    SyncService.start(this)
                 }
             } catch (exc: Exception) {
                 runOnUiThread {
@@ -293,28 +335,37 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshFileList(forceRescan: Boolean) {
         val config = configStore.load() ?: return
-        if (!forceRescan && cachedLocalNodes.isNotEmpty()) {
+        if (!forceRescan && cachedLocalNodes.isNotEmpty() && cachedFolderEntries.isNotEmpty()) {
             renderCurrentFolderFromCache()
             return
         }
         if (refreshInFlight) return
         refreshInFlight = true
         Thread {
-            val remoteState = syncStateStore.load().remote
+            val client = FreeCloudApiClient(config.baseUrl, config.password)
+            val remoteState = runCatching {
+                client.metadataList(currentFolderPath)
+            }.recoverCatching {
+                syncStateStore.load().remote.values
+                    .filter { entry -> isDirectChild(currentFolderPath, entry.path) }
+            }
             val fileMapResult = runCatching { documentTreeSync.scanTree(config.treeUri) }
-            if (fileMapResult.isFailure) {
+            if (fileMapResult.isFailure || remoteState.isFailure) {
                 val error = fileMapResult.exceptionOrNull()
+                    ?: remoteState.exceptionOrNull()
                 runOnUiThread {
                     refreshInFlight = false
-                    fileCountText.text = "Could not load local folder"
+                    fileCountText.text = "Could not load files"
                     emptyFilesText.visibility = View.VISIBLE
-                    emptyFilesText.text = error?.message ?: "Could not read the chosen phone folder."
+                    emptyFilesText.text = error?.message ?: "Could not load the FreeCloud file list."
                     renderFileItems(emptyList())
                 }
                 return@Thread
             }
 
-            cachedRemoteState = remoteState
+            val folderEntries = remoteState.getOrThrow()
+            cachedFolderEntries = folderEntries
+            cachedRemoteState = folderEntries.associateBy { it.path }
             cachedLocalNodes = fileMapResult.getOrThrow()
 
             runOnUiThread {
@@ -324,19 +375,34 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    private fun openLocalItem(item: SyncedFileItem) {
+    private fun openItem(item: SyncedFileItem) {
         val config = configStore.load() ?: return
         if (item.isDirectory) {
             currentFolderPath = item.path
-            renderCurrentFolderFromCache()
+            refreshFileList(forceRescan = true)
             return
         }
 
-        if (documentTreeSync.isTextFile(item.path)) {
+        if (item.isPlayable) {
+            playMediaItem(item)
+            return
+        }
+
+        if (item.hasLocalCopy && documentTreeSync.isTextFile(item.path)) {
             val intent = Intent(this, FileEditorActivity::class.java)
                 .putExtra(FileEditorActivity.EXTRA_TREE_URI, config.treeUri)
                 .putExtra(FileEditorActivity.EXTRA_PATH, item.path)
             editorLauncher.launch(intent)
+            return
+        }
+
+        if (!item.hasLocalCopy && !item.hasWebServerCopy) {
+            Toast.makeText(this, "${item.name} is on another device. Pi streaming is the next server feature.", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        if (!item.hasLocalCopy) {
+            Toast.makeText(this, "This file is available from the server but is not downloaded to this phone yet.", Toast.LENGTH_LONG).show()
             return
         }
 
@@ -400,27 +466,275 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun renderCurrentFolderFromCache() {
-        val items = cachedLocalNodes.values
+    private fun itemSubtitle(entry: ManifestEntry, localNode: LocalNode?, remoteEntry: ManifestEntry?): String {
+        if (localNode != null && remoteEntry == null) return itemSubtitle(localNode)
+        val prefix = if (entry.isDirectory) {
+            "Folder"
+        } else {
+            val sizeMb = entry.size.toDouble() / (1024.0 * 1024.0)
+            if (sizeMb >= 1.0) String.format("%.1f MB", sizeMb) else "${(entry.size + 1023) / 1024} KB"
+        }
+        val location = remoteEntry?.availableFromLabel()
+        val local = if (localNode != null) "On phone" else null
+        return listOfNotNull(prefix, location, local).joinToString(" • ")
+    }
+
+    private fun isMediaFile(path: String): Boolean {
+        return path.substringAfterLast('.', "").lowercase() in setOf(
+            "mp3", "m4a", "aac", "wav", "flac", "ogg", "opus",
+            "mp4", "m4v", "mov", "webm", "3gp", "mkv",
+        )
+    }
+
+    private fun isVideoFile(path: String): Boolean {
+        return path.substringAfterLast('.', "").lowercase() in setOf(
+            "mp4", "m4v", "mov", "webm", "3gp", "mkv",
+        )
+    }
+
+    private fun playMediaItem(item: SyncedFileItem, resumeMs: Int? = null) {
+        val config = configStore.load() ?: return
+        saveCurrentPlaybackPosition()
+        currentPlayablePath = item.path
+        currentPlayableFolder = item.path.substringBeforeLast('/', "")
+        currentIsVideo = isVideoFile(item.path)
+        playerSection.visibility = View.VISIBLE
+        videoPlayerView.visibility = if (currentIsVideo) View.VISIBLE else View.GONE
+        nowPlayingText.text = item.name
+        playerProgressText.text = "Loading..."
+        playPauseButton.text = "Pause"
+
+        val uri = if (item.hasLocalCopy) {
+            val document = documentTreeSync.findDocument(config.treeUri, item.path)
+            if (document == null) {
+                Toast.makeText(this, "Could not open ${item.name}.", Toast.LENGTH_LONG).show()
+                return
+            }
+            document.uri
+        } else {
+            if (!item.hasWebServerCopy) {
+                Toast.makeText(this, "${item.name} is on another device. Pi streaming is the next server feature.", Toast.LENGTH_LONG).show()
+                return
+            }
+            Uri.parse(FreeCloudApiClient(config.baseUrl, config.password).downloadUrl(item.path))
+        }
+
+        runCatching {
+            val headers = FreeCloudApiClient(config.baseUrl, config.password).requestHeaders()
+            if (currentIsVideo) {
+                audioPlayer?.release()
+                audioPlayer = null
+                videoPlayerView.stopPlayback()
+                videoPlayerView.setVideoURI(uri, headers)
+                videoPlayerView.setOnPreparedListener { player ->
+                    val saved = savedPositionFor(item.path, resumeMs)
+                    if (saved > 0) {
+                        videoPlayerView.seekTo(saved.coerceAtMost(player.duration.coerceAtLeast(0)))
+                    }
+                    videoPlayerView.start()
+                    startProgressTicker()
+                }
+                videoPlayerView.setOnCompletionListener {
+                    playbackStateStore.save(item.path, 0)
+                    playNextInFolder()
+                }
+                videoPlayerView.setOnErrorListener { _, _, _ ->
+                    Toast.makeText(this, "Could not play ${item.name}.", Toast.LENGTH_LONG).show()
+                    playPauseButton.text = "Play"
+                    true
+                }
+            } else {
+                videoPlayerView.stopPlayback()
+                audioPlayer?.release()
+                audioPlayer = MediaPlayer().apply {
+                    setDataSource(this@MainActivity, uri, headers)
+                    setOnPreparedListener { player ->
+                        val saved = savedPositionFor(item.path, resumeMs)
+                        if (saved > 0) {
+                            player.seekTo(saved.coerceAtMost(player.duration.coerceAtLeast(0)))
+                        }
+                        player.start()
+                        startProgressTicker()
+                    }
+                    setOnCompletionListener {
+                        playbackStateStore.save(item.path, 0)
+                        playNextInFolder()
+                    }
+                    setOnErrorListener { _, _, _ ->
+                        Toast.makeText(this@MainActivity, "Could not play ${item.name}.", Toast.LENGTH_LONG).show()
+                        playPauseButton.text = "Play"
+                        true
+                    }
+                    prepareAsync()
+                }
+            }
+        }.onFailure { exc ->
+            Toast.makeText(this, exc.message ?: "Could not play ${item.name}.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun savedPositionFor(path: String, resumeMs: Int?): Int {
+        return resumeMs ?: playbackStateStore.load()
+            ?.takeIf { it.path == path }
+            ?.positionMs
+            ?: 0
+    }
+
+    private fun startProgressTicker() {
+        progressHandler.removeCallbacks(progressTicker)
+        progressHandler.post(progressTicker)
+    }
+
+    private fun togglePlayback() {
+        if (currentPlayablePath.isBlank()) {
+            val resume = playbackStateStore.load()
+            val item = resume?.let { progress ->
+                currentItems().firstOrNull { it.path == progress.path && it.isPlayable }
+            }
+            if (item != null) {
+                playMediaItem(item, resume.positionMs)
+            }
+            return
+        }
+        if (isCurrentlyPlaying()) {
+            saveCurrentPlaybackPosition()
+            if (currentIsVideo) videoPlayerView.pause() else audioPlayer?.pause()
+            playPauseButton.text = "Play"
+        } else {
+            if (currentIsVideo) videoPlayerView.start() else audioPlayer?.start()
+            playPauseButton.text = "Pause"
+        }
+    }
+
+    private fun seekToStart() {
+        if (currentPlayablePath.isBlank()) return
+        if (currentIsVideo) videoPlayerView.seekTo(0) else audioPlayer?.seekTo(0)
+        playbackStateStore.save(currentPlayablePath, 0)
+        updatePlayerProgress()
+    }
+
+    private fun playNextInFolder() {
+        val playlist = currentItems()
+            .filter { it.isPlayable && it.path.substringBeforeLast('/', "") == currentPlayableFolder }
+            .sortedBy { it.name.lowercase() }
+        val currentIndex = playlist.indexOfFirst { it.path == currentPlayablePath }
+        val next = when {
+            playlist.isEmpty() -> null
+            currentIndex < 0 -> playlist.first()
+            currentIndex + 1 < playlist.size -> playlist[currentIndex + 1]
+            else -> null
+        }
+        if (next == null) {
+            playPauseButton.text = "Play"
+            updatePlayerProgress()
+            return
+        }
+        playMediaItem(next, 0)
+    }
+
+    private fun saveCurrentPlaybackPosition() {
+        if (currentPlayablePath.isBlank()) return
+        val position = currentPositionMs()
+        playbackStateStore.save(currentPlayablePath, position)
+    }
+
+    private fun updatePlayerProgress() {
+        if (currentPlayablePath.isBlank()) return
+        val position = currentPositionMs()
+        val duration = currentDurationMs()
+        playbackStateStore.save(currentPlayablePath, position)
+        playerProgressText.text = if (duration > 0) {
+            "${formatDuration(position)} / ${formatDuration(duration)}"
+        } else {
+            formatDuration(position)
+        }
+        playPauseButton.text = if (isCurrentlyPlaying()) "Pause" else "Play"
+    }
+
+    private fun currentPositionMs(): Int {
+        return if (currentIsVideo) {
+            runCatching { videoPlayerView.currentPosition }.getOrDefault(0)
+        } else {
+            runCatching { audioPlayer?.currentPosition ?: 0 }.getOrDefault(0)
+        }
+    }
+
+    private fun currentDurationMs(): Int {
+        return if (currentIsVideo) {
+            runCatching { videoPlayerView.duration }.getOrDefault(0)
+        } else {
+            runCatching { audioPlayer?.duration ?: 0 }.getOrDefault(0)
+        }
+    }
+
+    private fun isCurrentlyPlaying(): Boolean {
+        return if (currentIsVideo) {
+            runCatching { videoPlayerView.isPlaying }.getOrDefault(false)
+        } else {
+            runCatching { audioPlayer?.isPlaying == true }.getOrDefault(false)
+        }
+    }
+
+    private fun formatDuration(ms: Int): String {
+        val totalSeconds = (ms / 1000).coerceAtLeast(0)
+        val hours = totalSeconds / 3600
+        val minutes = (totalSeconds % 3600) / 60
+        val seconds = totalSeconds % 60
+        return if (hours > 0) {
+            "%d:%02d:%02d".format(hours, minutes, seconds)
+        } else {
+            "%02d:%02d".format(minutes, seconds)
+        }
+    }
+
+    private fun currentItems(): List<SyncedFileItem> {
+        val localDirect = cachedLocalNodes.values
             .filter { node -> isDirectChild(currentFolderPath, node.entry.path) }
-            .sortedWith(compareBy<LocalNode>({ !it.entry.isDirectory }, { it.entry.name.lowercase() }))
-            .map { node ->
-                val remoteEntry = cachedRemoteState[node.entry.path]
-                val isSynced = remoteEntry != null && roughlyEqual(node.entry, remoteEntry)
-                SyncedFileItem(
-                    path = node.entry.path,
-                    name = node.entry.name,
-                    subtitle = itemSubtitle(node),
-                    isDirectory = node.entry.isDirectory,
+            .associateBy { it.entry.path }
+        val allPaths = (cachedFolderEntries.map { it.path } + localDirect.keys).toSortedSet()
+        return allPaths.mapNotNull { path ->
+            val remoteEntry = cachedRemoteState[path]
+            val localNode = localDirect[path]
+            val entry = remoteEntry ?: localNode?.entry ?: return@mapNotNull null
+            val hasLocalCopy = localNode != null
+            val hasWebServerCopy = remoteEntry?.hasWebServerCopy ?: true
+            val playable = !entry.isDirectory && isMediaFile(entry.path) && (hasLocalCopy || hasWebServerCopy)
+            SyncedFileItem(
+                path = entry.path,
+                name = entry.name,
+                subtitle = itemSubtitle(entry, localNode, remoteEntry),
+                isDirectory = entry.isDirectory,
+                status = if (entry.isDirectory) "Open" else if (playable && hasLocalCopy) "Play" else if (playable) "Stream" else "Cloud",
+                isSynced = localNode != null && remoteEntry != null && roughlyEqual(localNode.entry, remoteEntry),
+                hasLocalCopy = hasLocalCopy,
+                hasWebServerCopy = hasWebServerCopy,
+                isPlayable = playable,
+            )
+        }
+    }
+
+    private fun renderCurrentFolderFromCache() {
+        val items = currentItems()
+            .map { item ->
+                val localNode = cachedLocalNodes[item.path]
+                val remoteEntry = cachedRemoteState[item.path]
+                val entry = remoteEntry ?: localNode?.entry
+                val isSynced = localNode != null && remoteEntry != null && roughlyEqual(localNode.entry, remoteEntry)
+                item.copy(
                     status = when {
-                        node.entry.isDirectory -> "Open"
-                        documentTreeSync.isTextFile(node.entry.path) -> "Edit"
+                        item.isDirectory -> "Open"
+                        item.isPlayable && item.hasLocalCopy -> "Play"
+                        item.isPlayable && item.hasWebServerCopy -> "Stream"
+                        !item.hasLocalCopy && !item.hasWebServerCopy -> "Node only"
+                        entry != null && documentTreeSync.isTextFile(entry.path) && item.hasLocalCopy -> "Edit"
                         isSynced -> "Synced"
-                        else -> "Local"
+                        item.hasLocalCopy -> "Local"
+                        else -> "Cloud"
                     },
                     isSynced = isSynced,
                 )
             }
+            .sortedWith(compareBy<SyncedFileItem>({ !it.isDirectory }, { it.name.lowercase() }))
 
         currentFolderText.text = "Folder: /${currentFolderPath}".replace("//", "/")
         upFolderButton.isEnabled = currentFolderPath.isNotBlank()
@@ -428,6 +742,18 @@ class MainActivity : AppCompatActivity() {
         emptyFilesText.visibility = if (items.isEmpty()) View.VISIBLE else View.GONE
         emptyFilesText.text = "This folder is empty."
         renderFileItems(items)
+        showSavedPlaybackHint(items)
+    }
+
+    private fun showSavedPlaybackHint(items: List<SyncedFileItem>) {
+        if (currentPlayablePath.isNotBlank()) return
+        val progress = playbackStateStore.load() ?: return
+        val item = items.firstOrNull { it.path == progress.path && it.isPlayable } ?: return
+        playerSection.visibility = View.VISIBLE
+        videoPlayerView.visibility = if (isVideoFile(item.path)) View.VISIBLE else View.GONE
+        nowPlayingText.text = "Resume ${item.name}"
+        playerProgressText.text = formatDuration(progress.positionMs)
+        playPauseButton.text = "Play"
     }
 
     private fun renderFileItems(items: List<SyncedFileItem>) {
@@ -456,7 +782,7 @@ class MainActivity : AppCompatActivity() {
                     else R.color.freecloud_blue_dark,
                 ),
             )
-            itemView.setOnClickListener { openLocalItem(item) }
+            itemView.setOnClickListener { openItem(item) }
             itemView.setOnLongClickListener {
                 showItemMenu(it, item)
                 true

@@ -13,6 +13,7 @@ class BootReceiver : BroadcastReceiver() {
 
         val config = ConfigStore(context).load() ?: return
         if (config.treeUri.isBlank()) return
+        if (!config.autoSync) return
 
         SyncService.start(context)
     }
