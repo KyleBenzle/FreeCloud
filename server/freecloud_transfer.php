@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/freecloud_lifecycle.php';
 
 $baseDir = __DIR__;
 $sessionDir = $baseDir . '/freecloud_sessions';
@@ -7,6 +8,7 @@ $metaRoot = $baseDir . '/freecloud_meta';
 $transferRoot = $metaRoot . '/transfers';
 $configFile = $baseDir . '/config.json';
 $filesFile = $metaRoot . '/files.json';
+$tombstonesFile = $metaRoot . '/tombstones.json';
 $devicesFile = $metaRoot . '/devices.json';
 
 if (!is_dir($sessionDir)) {
@@ -31,16 +33,7 @@ function loadJson(string $path): array
 
 function saveJson(string $path, array $data): bool
 {
-    $tmp = $path . '.tmp';
-    if (file_put_contents($tmp, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX) === false) {
-        return false;
-    }
-    if (!@rename($tmp, $path)) {
-        @unlink($tmp);
-        return false;
-    }
-    @chmod($path, 0600);
-    return true;
+    return fc_save_json_atomic($path, $data);
 }
 
 function normalizedPath(string $path): string
@@ -136,6 +129,9 @@ if ($action === 'create') {
         failPage('The request token expired. Return to FreeCloud and try again.', 403);
     }
     $path = normalizedPath((string) ($_POST['path'] ?? ''));
+    if (fc_catalog_path_is_tombstoned($path, loadJson($tombstonesFile))) {
+        failPage('That item was globally deleted.', 410);
+    }
     $entries = loadJson($filesFile);
     $entry = isset($entries[$path]) && is_array($entries[$path]) ? $entries[$path] : [];
     if ($entry === [] || (string) ($entry['type'] ?? '') !== 'file' || (bool) ($entry['deleted'] ?? false)) {
@@ -196,6 +192,16 @@ $recordPath = $transferRoot . '/' . $id . '.json';
 $record = $id !== '' ? loadJson($recordPath) : [];
 if ($record !== [] && expireTransfer($transferRoot, $id, $record)) {
     $record = [];
+}
+if ($record !== [] && fc_catalog_path_is_tombstoned((string) ($record['path'] ?? ''), loadJson($tombstonesFile))) {
+    $record['status'] = 'cancelled';
+    $record['error'] = 'Path globally deleted.';
+    $record['updated_at'] = time();
+    saveJson($recordPath, $record);
+    @unlink($transferRoot . '/' . $id . '.bin');
+    @unlink($transferRoot . '/' . $id . '.part');
+    if ($action === 'status') jsonOut(['ok' => true, 'status' => 'failed', 'source_name' => 'storage node', 'source_online' => false, 'error' => 'This item was globally deleted.']);
+    failPage('That item was globally deleted.', 410);
 }
 
 if ($action === 'status') {

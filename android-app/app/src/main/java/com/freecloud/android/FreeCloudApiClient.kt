@@ -37,6 +37,123 @@ class FreeCloudApiClient(baseUrl: String, private val password: String) {
         return parseEntries(entries)
     }
 
+    fun metadataManifest(): List<ManifestEntry> {
+        val data = requestJson("metadata_manifest")
+        return parseEntries(data.optJSONArray("entries") ?: JSONArray())
+    }
+
+    fun placementRules(): List<PlacementRule> {
+        val data = requestJson("placement_rules")
+        val out = mutableListOf<PlacementRule>()
+        fun collect(groups: JSONObject?, desiredRules: Boolean) {
+            groups ?: return
+            for (deviceId in groups.keys()) {
+                val rules = groups.optJSONArray(deviceId) ?: continue
+                for (index in 0 until rules.length()) {
+                    val rule = rules.optJSONObject(index) ?: continue
+                    // Any explicit placement rule, including OFF, assigns this path
+                    // to reconciliation and prevents the legacy engine racing it.
+                    val enabled = if (desiredRules) true else rule.optString("mode") in setOf("storage_only", "sync", "keep_offline", "upload_only", "download_only")
+                    out += PlacementRule(deviceId, UrlTools.remotePath(rule.optString("path")), enabled, rule.optBoolean("recursive", true))
+                }
+            }
+        }
+        collect(data.optJSONObject("desired_rules"), true)
+        collect(data.optJSONObject("sync_rules"), false)
+        return out
+    }
+
+    fun placementManagedPaths(paths: Collection<String>): Set<String> {
+        val normalized = paths.map { UrlTools.remotePath(it) }.filter { it.isNotEmpty() }.distinct().sorted()
+        if (normalized.isEmpty()) return emptySet()
+        require(normalized.size <= 20_000) { "Too many changed paths to check placement ownership safely." }
+        val pathArray = JSONArray()
+        normalized.forEach(pathArray::put)
+        val data = postJson("placement_ownership", JSONObject().put("paths", pathArray))
+        val managed = data.optJSONArray("managed_paths") ?: JSONArray()
+        return (0 until managed.length())
+            .mapNotNull { index -> managed.optString(index).takeIf { it.isNotEmpty() }?.let { UrlTools.remotePath(it) } }
+            .toSet()
+    }
+
+    fun pollReconciliation(deviceId: String): List<ReconciliationJob> {
+        val data = postJson("poll_reconciliation", JSONObject().put("device_id", deviceId))
+        val jobs = data.optJSONArray("jobs") ?: JSONArray()
+        return (0 until jobs.length()).mapNotNull { index -> parseJob(jobs.optJSONObject(index)) }
+    }
+
+    fun downloadReconciliation(deviceId: String, jobId: String): ByteArray {
+        val connection = openConnection(
+            apiUrl("download_reconciliation", mapOf("device_id" to deviceId, "job_id" to jobId)), "GET", null,
+            mapOf("X-FreeCloud-Device" to deviceId),
+        )
+        return executeBytes(connection)
+    }
+
+    fun uploadReconciliation(deviceId: String, jobId: String, bytes: ByteArray, hash: String): JSONObject {
+        val connection = openConnection(
+            apiUrl("upload_reconciliation", mapOf("device_id" to deviceId, "job_id" to jobId)),
+            "POST", "application/octet-stream",
+            mapOf("X-FreeCloud-Device" to deviceId, "X-FreeCloud-SHA256" to hash),
+        )
+        return JSONObject(String(executeBytes(connection, bytes), Charsets.UTF_8))
+    }
+
+    fun commitReconciliation(deviceId: String, jobId: String, sourceUnchanged: Boolean): JSONObject =
+        postJson("commit_reconciliation", JSONObject().put("device_id", deviceId).put("job_id", jobId).put("source_unchanged", sourceUnchanged))
+
+    fun acknowledgeReconciliation(deviceId: String, jobId: String, status: String, error: String = ""): JSONObject =
+        postJson("ack_reconciliation", JSONObject().put("device_id", deviceId).put("job_id", jobId).put("status", status).put("error", error.take(500)))
+
+    fun reportLocationHash(deviceId: String, jobId: String, hash: String = "", error: String = ""): JSONObject =
+        postJson("report_location_hash", JSONObject().put("device_id", deviceId).put("job_id", jobId).put("hash", hash).put("error", error.take(500)))
+
+    fun registerDevice(identity: DeviceIdentity): JSONObject {
+        return requestJson(
+            action = "register_device",
+            method = "POST",
+            contentType = "application/json",
+            body = JSONObject()
+                .put("device_id", identity.id)
+                .put("name", identity.name)
+                .put("type", identity.type)
+                .put("capabilities", JSONArray(listOf("metadata", "local_storage", "background_sync", "keep_offline")))
+                .toString().toByteArray(Charsets.UTF_8),
+        )
+    }
+
+    fun heartbeat(deviceId: String): JSONObject {
+        return postJson("heartbeat", JSONObject().put("device_id", deviceId))
+    }
+
+    fun publishManifest(deviceId: String, entries: List<ManifestEntry>, complete: Boolean): JSONObject {
+        val payloadEntries = JSONArray()
+        for (entry in entries) {
+            payloadEntries.put(
+                JSONObject()
+                    .put("path", entry.path)
+                    .put("name", entry.name)
+                    .put("type", entry.type)
+                    .put("size", entry.size)
+                    .put("mtime", entry.mtime)
+                    .put("hash", entry.hash),
+            )
+        }
+        return postJson(
+            "publish_manifest",
+            JSONObject().put("device_id", deviceId).put("entries", payloadEntries).put("complete", complete),
+        )
+    }
+
+    fun postJson(action: String, payload: JSONObject): JSONObject {
+        return requestJson(
+            action = action,
+            method = "POST",
+            contentType = "application/json",
+            body = payload.toString().toByteArray(Charsets.UTF_8),
+        )
+    }
+
     fun mkdir(path: String) {
         requestJson("mkdir", mapOf("path" to UrlTools.remotePath(path)), method = "POST", body = ByteArray(0))
     }
@@ -113,7 +230,7 @@ class FreeCloudApiClient(baseUrl: String, private val password: String) {
         }
     }
 
-    private fun openConnection(url: String, method: String, contentType: String?): HttpURLConnection {
+    private fun openConnection(url: String, method: String, contentType: String?, extraHeaders: Map<String, String> = emptyMap()): HttpURLConnection {
         val connection = URL(url).openConnection() as HttpURLConnection
         connection.requestMethod = method
         connection.connectTimeout = 120_000
@@ -126,6 +243,7 @@ class FreeCloudApiClient(baseUrl: String, private val password: String) {
         if (contentType != null) {
             connection.setRequestProperty("Content-Type", contentType)
         }
+        for ((key, value) in extraHeaders) connection.setRequestProperty(key, value)
         return connection
     }
 
@@ -155,7 +273,15 @@ class FreeCloudApiClient(baseUrl: String, private val password: String) {
                 type = item.optString("type"),
                 size = item.optLong("size"),
                 mtime = item.optLong("mtime"),
+                hash = item.optString("hash"),
                 locations = parseLocations(item.optJSONArray("locations")),
+                desiredLocations = parseLocations(item.optJSONArray("desired_locations")),
+                staleLocations = item.optJSONArray("stale_locations")?.let { values ->
+                    (0 until values.length()).map { values.optString(it) }
+                } ?: emptyList(),
+                removingLocations = item.optJSONArray("removing_locations")?.let { values ->
+                    (0 until values.length()).map { values.optString(it) }
+                } ?: emptyList(),
             )
         }
         return out
@@ -171,9 +297,33 @@ class FreeCloudApiClient(baseUrl: String, private val password: String) {
                 deviceId = item.optString("device_id"),
                 name = item.optString("name"),
                 available = item.optBoolean("available", true),
+                size = item.optLong("size"),
+                mtime = item.optLong("mtime"),
+                hash = item.optString("hash"),
             )
         }
         return out
+    }
+
+    private fun parseJob(item: JSONObject?): ReconciliationJob? {
+        item ?: return null
+        val id = item.optString("job_id")
+        if (id.isBlank()) return null
+        val facts = item.optJSONObject("destination_facts")?.let {
+            StorageLocation("", "", "", true, it.optLong("size"), it.optLong("mtime"), it.optString("hash"))
+        }
+        val removalFacts = mutableMapOf<String, StorageLocation>()
+        item.optJSONObject("removal_facts")?.let { values ->
+            for (path in values.keys()) {
+                val value = values.optJSONObject(path) ?: continue
+                removalFacts[path] = StorageLocation("", "", "", true, value.optLong("size"), value.optLong("mtime"), value.optString("hash"))
+            }
+        }
+        return ReconciliationJob(
+            id, item.optString("path"), item.optString("status"), item.optString("source_device_id"),
+            item.optString("destination_device_id"), item.optLong("expected_size"), item.optLong("expected_mtime"),
+            item.optString("hash"), facts, item.optBoolean("recursive"), removalFacts,
+        )
     }
 
     private fun parseErrorMessage(body: String): String? {

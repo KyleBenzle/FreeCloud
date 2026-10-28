@@ -14,9 +14,20 @@ class SyncEngine(private val context: Context) {
         val previousRemote = previous.remote
 
         val client = FreeCloudApiClient(config.baseUrl, config.password)
-        val local = documents.scanTree(config.treeUri)
+        val identity = DeviceIdentity(config.deviceId, config.deviceName, config.deviceType)
+        client.registerDevice(identity)
+        client.heartbeat(identity.id)
+        var local = documents.scanTree(config.treeUri)
+        client.publishManifest(identity.id, documents.providerManifest(local), complete = true)
+        onProgress?.invoke("Checking requested placements...")
+        val reconciliation = AndroidReconciliation(client, documents).process(config, identity, onProgress)
+        if (reconciliation.uploaded > 0 || reconciliation.downloaded > 0) {
+            local = documents.scanTree(config.treeUri)
+            client.publishManifest(identity.id, documents.providerManifest(local), complete = true)
+        }
         onProgress?.invoke("Loading remote file list...")
         val remote = client.manifest().associateBy { it.path }
+        val placementRules = client.placementRules()
         onProgress?.invoke("Syncing ${local.size} local and ${remote.size} remote items...")
 
         var uploaded = 0
@@ -26,8 +37,17 @@ class SyncEngine(private val context: Context) {
         var conflicts = 0
 
         val allPaths = (local.keys + remote.keys + previousLocal.keys + previousRemote.keys).toSortedSet()
+        val ownershipCandidates = allPaths.filter { path ->
+            val localEntry = local[path]?.entry
+            val remoteEntry = remote[path]
+            (localEntry != null || remoteEntry != null) &&
+                !(localEntry != null && remoteEntry != null && roughlyEqual(localEntry, remoteEntry))
+        }
+        val catalogManagedPaths = client.placementManagedPaths(ownershipCandidates)
 
         for (path in allPaths) {
+            // Desired-state reconciliation exclusively owns these paths.
+            if (ReconciliationSafety.isManaged(path, placementRules, catalogManagedPaths)) continue
             val localNode = local[path]
             val localEntry = localNode?.entry
             val remoteEntry = remote[path]
@@ -119,7 +139,9 @@ class SyncEngine(private val context: Context) {
         }
 
         onProgress?.invoke("Refreshing sync state...")
-        val freshLocal = documents.scanTree(config.treeUri).mapValues { it.value.entry }
+        val freshLocalNodes = documents.scanTree(config.treeUri)
+        client.publishManifest(identity.id, documents.providerManifest(freshLocalNodes), complete = true)
+        val freshLocal = freshLocalNodes.mapValues { it.value.entry }
         val freshRemote = client.manifest().associateBy { it.path }
         stateStore.save(SyncState(local = freshLocal, remote = freshRemote))
 
@@ -129,6 +151,8 @@ class SyncEngine(private val context: Context) {
             deletedLocal = deletedLocal,
             deletedRemote = deletedRemote,
             conflicts = conflicts,
+            reconciledUploaded = reconciliation.uploaded,
+            reconciledDownloaded = reconciliation.downloaded,
         )
     }
 

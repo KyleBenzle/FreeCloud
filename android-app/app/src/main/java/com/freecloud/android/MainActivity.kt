@@ -12,12 +12,13 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import android.text.SpannableString
 import android.text.SpannableStringBuilder
 import android.text.method.ScrollingMovementMethod
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
-import android.view.LayoutInflater
 import android.view.View
 import android.widget.ImageButton
 import android.widget.Button
@@ -32,6 +33,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.core.content.FileProvider
 import androidx.core.content.ContextCompat
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import java.io.File
 import kotlin.math.abs
 
@@ -39,6 +42,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var configStore: ConfigStore
     private lateinit var documentTreeSync: DocumentTreeSync
     private lateinit var syncStateStore: SyncStateStore
+    private lateinit var folderMetadataCache: FolderMetadataCache
     private lateinit var playbackStateStore: PlaybackStateStore
 
     private lateinit var setupCard: LinearLayout
@@ -61,7 +65,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var restartButton: Button
     private lateinit var nextButton: Button
     private lateinit var emptyFilesText: TextView
-    private lateinit var filesRecyclerView: LinearLayout
+    private lateinit var filesRecyclerView: RecyclerView
+    private lateinit var filesAdapter: SyncedFilesAdapter
     private lateinit var activitySection: LinearLayout
     private lateinit var logText: TextView
     private lateinit var saveSetupButton: Button
@@ -89,7 +94,11 @@ class MainActivity : AppCompatActivity() {
     @Volatile
     private var cachedFolderEntries: List<ManifestEntry> = emptyList()
     @Volatile
-    private var refreshInFlight = false
+    private var cachedFolderPath: String = ""
+    @Volatile
+    private var folderRequestGeneration = 0
+    @Volatile
+    private var maintenanceInFlight = false
 
     private val folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri == null) return@registerForActivityResult
@@ -136,8 +145,16 @@ class MainActivity : AppCompatActivity() {
         configStore = ConfigStore(this)
         documentTreeSync = DocumentTreeSync(this)
         syncStateStore = SyncStateStore(this)
+        folderMetadataCache = FolderMetadataCache(this)
         playbackStateStore = PlaybackStateStore(this)
         bindViews()
+        filesAdapter = SyncedFilesAdapter(
+            onClick = ::openItem,
+            onLongClick = ::showItemMenu,
+        )
+        filesRecyclerView.layoutManager = LinearLayoutManager(this)
+        filesRecyclerView.adapter = filesAdapter
+        filesRecyclerView.setHasFixedSize(false)
         wireActions()
         requestNotificationPermissionIfNeeded()
         registerBackHandler()
@@ -217,7 +234,7 @@ class MainActivity : AppCompatActivity() {
         upFolderButton.setOnClickListener {
             if (currentFolderPath.isBlank()) return@setOnClickListener
             currentFolderPath = currentFolderPath.substringBeforeLast('/', "")
-            refreshFileList(forceRescan = true)
+            refreshFileList(forceRescan = false)
         }
         menuButton.setOnClickListener { showOverflowMenu() }
         playPauseButton.setOnClickListener { togglePlayback() }
@@ -230,7 +247,7 @@ class MainActivity : AppCompatActivity() {
             override fun handleOnBackPressed() {
                 if (runningCard.visibility == View.VISIBLE && currentFolderPath.isNotBlank()) {
                     currentFolderPath = currentFolderPath.substringBeforeLast('/', "")
-                    refreshFileList(forceRescan = true)
+                    refreshFileList(forceRescan = false)
                     return
                 }
                 isEnabled = false
@@ -269,14 +286,19 @@ class MainActivity : AppCompatActivity() {
                     client.setup(driveName, password)
                 }
 
+                val identity = configStore.deviceIdentity()
                 val config = FreeCloudConfig(
                     domain = domain,
                     driveName = driveName,
                     baseUrl = baseUrl,
                     password = password,
                     treeUri = treeUri.toString(),
+                    deviceId = identity.id,
+                    deviceName = identity.name,
+                    deviceType = identity.type,
                 )
 
+                client.registerDevice(identity)
                 configStore.save(config)
 
                 runOnUiThread {
@@ -335,42 +357,100 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshFileList(forceRescan: Boolean) {
         val config = configStore.load() ?: return
-        if (!forceRescan && cachedLocalNodes.isNotEmpty() && cachedFolderEntries.isNotEmpty()) {
+        val requestedFolder = currentFolderPath
+        val generation = ++folderRequestGeneration
+        var showedCache = false
+
+        val diskCached = folderMetadataCache.load(requestedFolder)
+        if (diskCached != null) {
+            showedCache = true
+            cachedFolderPath = requestedFolder
+            cachedFolderEntries = diskCached
+            cachedRemoteState = diskCached.associateBy { it.path }
             renderCurrentFolderFromCache()
-            return
-        }
-        if (refreshInFlight) return
-        refreshInFlight = true
-        Thread {
-            val client = FreeCloudApiClient(config.baseUrl, config.password)
-            val remoteState = runCatching {
-                client.metadataList(currentFolderPath)
-            }.recoverCatching {
-                syncStateStore.load().remote.values
-                    .filter { entry -> isDirectChild(currentFolderPath, entry.path) }
+            fileCountText.text = "${diskCached.size} cached items · Refreshing…"
+        } else {
+            val legacyCached = syncStateStore.load().remote.values.filter { entry -> isDirectChild(requestedFolder, entry.path) }
+            if (legacyCached.isNotEmpty()) {
+                showedCache = true
+                cachedFolderPath = requestedFolder
+                cachedFolderEntries = legacyCached
+                cachedRemoteState = legacyCached.associateBy { it.path }
+                renderCurrentFolderFromCache()
+                fileCountText.text = "${legacyCached.size} cached items · Refreshing…"
             }
-            val fileMapResult = runCatching { documentTreeSync.scanTree(config.treeUri) }
-            if (fileMapResult.isFailure || remoteState.isFailure) {
-                val error = fileMapResult.exceptionOrNull()
-                    ?: remoteState.exceptionOrNull()
+        }
+        if (!showedCache) {
+            cachedFolderPath = requestedFolder
+            cachedFolderEntries = emptyList()
+            cachedRemoteState = emptyMap()
+            renderFileItems(emptyList())
+            fileCountText.text = "Loading folder…"
+            emptyFilesText.visibility = View.GONE
+        }
+
+        // Folder browsing is deliberately independent from the expensive local
+        // SAF scan/manifest publication performed by device maintenance.
+        Thread {
+            val startedAt = SystemClock.elapsedRealtime()
+            val client = FreeCloudApiClient(config.baseUrl, config.password)
+            val remoteState = runCatching { client.metadataList(requestedFolder) }
+            if (remoteState.isFailure) {
+                val error = remoteState.exceptionOrNull()
                 runOnUiThread {
-                    refreshInFlight = false
-                    fileCountText.text = "Could not load files"
-                    emptyFilesText.visibility = View.VISIBLE
-                    emptyFilesText.text = error?.message ?: "Could not load the FreeCloud file list."
-                    renderFileItems(emptyList())
+                    if (generation == folderRequestGeneration && currentFolderPath == requestedFolder && !showedCache) {
+                        fileCountText.text = "Could not refresh files"
+                        emptyFilesText.visibility = View.VISIBLE
+                        emptyFilesText.text = error?.message ?: "Could not load the FreeCloud file list."
+                        renderFileItems(emptyList())
+                    }
                 }
                 return@Thread
             }
 
             val folderEntries = remoteState.getOrThrow()
-            cachedFolderEntries = folderEntries
-            cachedRemoteState = folderEntries.associateBy { it.path }
-            cachedLocalNodes = fileMapResult.getOrThrow()
+            Log.i("FreeCloudPerf", "metadataList /$requestedFolder: ${SystemClock.elapsedRealtime() - startedAt}ms, ${folderEntries.size} entries")
+            runCatching { folderMetadataCache.save(requestedFolder, folderEntries) }
 
             runOnUiThread {
-                refreshInFlight = false
-                renderCurrentFolderFromCache()
+                if (generation == folderRequestGeneration && currentFolderPath == requestedFolder) {
+                    cachedFolderPath = requestedFolder
+                    cachedFolderEntries = folderEntries
+                    cachedRemoteState = folderEntries.associateBy { it.path }
+                    renderCurrentFolderFromCache()
+                }
+            }
+        }.start()
+
+        if (forceRescan) startDeviceMaintenance(config)
+    }
+
+    private fun startDeviceMaintenance(config: FreeCloudConfig) {
+        if (maintenanceInFlight) return
+        maintenanceInFlight = true
+        Thread {
+            val startedAt = SystemClock.elapsedRealtime()
+            val client = FreeCloudApiClient(config.baseUrl, config.password)
+            val identity = DeviceIdentity(config.deviceId, config.deviceName, config.deviceType)
+            val result = runCatching {
+                client.registerDevice(identity)
+                client.heartbeat(identity.id)
+                var localNodes = documentTreeSync.scanTree(config.treeUri)
+                client.publishManifest(identity.id, documentTreeSync.providerManifest(localNodes), complete = true)
+                val counts = AndroidReconciliation(client, documentTreeSync).process(config, identity)
+                if (counts.uploaded > 0 || counts.downloaded > 0) {
+                    localNodes = documentTreeSync.scanTree(config.treeUri)
+                    client.publishManifest(identity.id, documentTreeSync.providerManifest(localNodes), complete = true)
+                }
+                localNodes
+            }
+            runOnUiThread {
+                maintenanceInFlight = false
+                result.onSuccess {
+                    cachedLocalNodes = it
+                    Log.i("FreeCloudPerf", "device maintenance: ${SystemClock.elapsedRealtime() - startedAt}ms, ${it.size} local entries")
+                    if (cachedFolderPath == currentFolderPath) renderCurrentFolderFromCache()
+                }.onFailure { appendLog("Location refresh failed: ${it.message}") }
             }
         }.start()
     }
@@ -379,7 +459,7 @@ class MainActivity : AppCompatActivity() {
         val config = configStore.load() ?: return
         if (item.isDirectory) {
             currentFolderPath = item.path
-            refreshFileList(forceRescan = true)
+            refreshFileList(forceRescan = false)
             return
         }
 
@@ -757,51 +837,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderFileItems(items: List<SyncedFileItem>) {
-        filesRecyclerView.removeAllViews()
-        val inflater = LayoutInflater.from(this)
-        for (item in items) {
-            val itemView = inflater.inflate(R.layout.item_synced_file, filesRecyclerView, false)
-            val glyphText = itemView.findViewById<TextView>(R.id.fileGlyphText)
-            val nameText = itemView.findViewById<TextView>(R.id.fileNameText)
-            val pathText = itemView.findViewById<TextView>(R.id.filePathText)
-            val statusText = itemView.findViewById<TextView>(R.id.fileStatusText)
-
-            glyphText.text = glyphForItem(item)
-            nameText.text = item.name
-            pathText.text = item.subtitle
-            statusText.text = item.status
-            statusText.setBackgroundResource(
-                if (item.isDirectory) R.drawable.freecloud_pending_badge_bg
-                else if (item.isSynced) R.drawable.freecloud_synced_badge_bg
-                else R.drawable.freecloud_pending_badge_bg,
-            )
-            statusText.setTextColor(
-                getColorCompat(
-                    if (item.isDirectory) R.color.freecloud_blue_dark
-                    else if (item.isSynced) R.color.freecloud_success
-                    else R.color.freecloud_blue_dark,
-                ),
-            )
-            itemView.setOnClickListener { openItem(item) }
-            itemView.setOnLongClickListener {
-                showItemMenu(it, item)
-                true
-            }
-            filesRecyclerView.addView(itemView)
-        }
-    }
-
-    private fun glyphForItem(item: SyncedFileItem): String {
-        if (item.isDirectory) return "\uD83D\uDCC1"
-        return when (item.name.substringAfterLast('.', "").lowercase()) {
-            "jpg", "jpeg", "png", "gif", "webp", "bmp", "svg" -> "\uD83D\uDDBC"
-            "mp4", "mov", "m4v", "webm", "ogv", "ogg" -> "\uD83C\uDFA5"
-            "mp3", "wav", "m4a", "aac", "flac" -> "\uD83C\uDFB5"
-            "txt", "md", "json", "csv", "log", "xml", "yaml", "yml", "ini", "conf" -> "\uD83D\uDCC4"
-            "pdf" -> "\uD83D\uDCD5"
-            "zip", "rar", "7z", "tar", "gz" -> "\uD83D\uDCE6"
-            else -> "\uD83D\uDCC4"
-        }
+        filesAdapter.submitList(items)
     }
 
     private fun getColorCompat(colorRes: Int): Int {

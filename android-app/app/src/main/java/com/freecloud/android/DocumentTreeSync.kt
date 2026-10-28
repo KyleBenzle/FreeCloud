@@ -7,6 +7,7 @@ import androidx.documentfile.provider.DocumentFile
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.security.MessageDigest
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -58,6 +59,77 @@ class DocumentTreeSync(private val context: Context) {
         } ?: error("Could not read local file ${node.entry.path}")
     }
 
+    fun providerManifest(nodes: Map<String, LocalNode>): List<ManifestEntry> {
+        return nodes.values.map { node ->
+            node.entry.copy(
+                mtime = logicalMtime(node.entry.path, node.entry.size, node.entry.mtime),
+                hash = "",
+            )
+        }
+    }
+
+    fun sha256(node: LocalNode): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        context.contentResolver.openInputStream(node.document.uri)?.use { input ->
+            val chunk = ByteArray(1024 * 1024)
+            while (true) {
+                val read = input.read(chunk)
+                if (read <= 0) break
+                digest.update(chunk, 0, read)
+            }
+        } ?: error("Could not hash local file ${node.entry.path}")
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun normalizeMtime(value: Long): Long = if (value > 100_000_000_000L) value / 1000L else value
+
+    fun normalizedMtime(node: LocalNode): Long = logicalMtime(node.entry.path, node.entry.size, node.entry.mtime)
+
+    /** Safely installs verified bytes without exposing a partial destination. */
+    fun installReconciliationFile(treeUri: String, path: String, bytes: ByteArray, mtime: Long): LocalNode {
+        val cleanPath = UrlTools.remotePath(path)
+        val parent = ensureDirectory(root(treeUri), cleanPath.substringBeforeLast('/', ""))
+        val name = cleanPath.substringAfterLast('/')
+        val tempName = ".$name.freecloud-${System.nanoTime()}.part"
+        val backupName = ".$name.freecloud-${System.nanoTime()}.backup"
+        val temp = requireNotNull(parent.createFile(mimeTypeForName(name), tempName)) { "Could not create temporary file $path" }
+        var installedSuccessfully = false
+        try {
+            context.contentResolver.openOutputStream(temp.uri, "wt")?.use { it.write(bytes) }
+                ?: error("Could not write temporary file $path")
+            require(temp.length() == bytes.size.toLong()) { "Temporary file size verification failed for $path" }
+            val existing = parent.findFile(name)
+            if (existing != null) require(existing.renameTo(backupName)) { "Could not protect existing file $path" }
+            try {
+                require(temp.renameTo(name)) { "Could not atomically install $path" }
+                parent.findFile(backupName)?.delete()
+            } catch (error: Throwable) {
+                parent.findFile(backupName)?.renameTo(name)
+                throw error
+            }
+            val installed = requireNotNull(parent.findFile(name)) { "Installed file is unavailable: $path" }
+            rememberLogicalMtime(cleanPath, installed.length(), installed.lastModified(), mtime)
+            installedSuccessfully = true
+            return LocalNode(ManifestEntry(cleanPath, name, "file", installed.length(), mtime), installed)
+        } finally {
+            if (!installedSuccessfully) temp.delete()
+        }
+    }
+
+    private fun rememberLogicalMtime(path: String, size: Long, physicalMtime: Long, logicalMtime: Long) {
+        context.getSharedPreferences("freecloud_reconciliation_mtimes", Context.MODE_PRIVATE).edit()
+            .putString(path, "$size|$physicalMtime|$logicalMtime").apply()
+    }
+
+    private fun logicalMtime(path: String, size: Long, physicalMtime: Long): Long {
+        val physical = normalizeMtime(physicalMtime)
+        val raw = context.getSharedPreferences("freecloud_reconciliation_mtimes", Context.MODE_PRIVATE)
+            .getString(path, null) ?: return physical
+        val parts = raw.split('|')
+        if (parts.size != 3 || parts[0].toLongOrNull() != size || parts[1].toLongOrNull() != physicalMtime) return physical
+        return parts[2].toLongOrNull() ?: physical
+    }
+
     fun deletePath(treeUri: String, path: String): Boolean {
         val document = findPath(root(treeUri), UrlTools.remotePath(path)) ?: return false
         return deleteRecursive(document)
@@ -103,8 +175,16 @@ class DocumentTreeSync(private val context: Context) {
     }
 
     private fun walk(current: DocumentFile, prefix: String, out: MutableMap<String, LocalNode>) {
+        require(current.exists() && current.isDirectory && current.canRead()) {
+            "Could not completely scan FreeCloud folder ${prefix.ifBlank { "/" }}"
+        }
         for (child in current.listFiles()) {
-            val name = child.name ?: continue
+            require(child.exists() && child.canRead()) {
+                "Could not completely scan FreeCloud item ${child.uri}"
+            }
+            val name = requireNotNull(child.name) {
+                "Could not completely scan an unnamed FreeCloud item in $prefix"
+            }
             val path = if (prefix.isBlank()) name else "$prefix/$name"
             val entry = ManifestEntry(
                 path = path,

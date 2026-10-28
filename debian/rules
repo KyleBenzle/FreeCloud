@@ -12,6 +12,7 @@ override_dh_auto_install:
 	install -d debian/freecloud/usr/share/freecloud
 	install -m 0644 freecloud_ui.py freecloud_cli.py debian/freecloud/usr/share/freecloud/
 	install -m 0644 logo.png icon.png FClogo.png debian/freecloud/usr/share/freecloud/
+	cp -a images debian/freecloud/usr/share/freecloud/
 	cp -a server debian/freecloud/usr/share/freecloud/
 	install -d debian/freecloud/usr/share/applications
 	install -m 0644 packaging/linux/freecloud.desktop debian/freecloud/usr/share/applications/freecloud.desktop

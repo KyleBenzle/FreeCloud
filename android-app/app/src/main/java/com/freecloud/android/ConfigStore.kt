@@ -3,6 +3,7 @@ package com.freecloud.android
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.os.Build
 import android.util.Base64
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -21,6 +22,7 @@ class ConfigStore(context: Context) {
             return null
         }
 
+        val identity = deviceIdentity()
         return FreeCloudConfig(
             domain = prefs.getString("domain", "")?.orEmpty().orEmpty(),
             driveName = prefs.getString("drive_name", "FreeCloud")?.orEmpty().orEmpty(),
@@ -30,10 +32,31 @@ class ConfigStore(context: Context) {
             intervalSeconds = prefs.getInt("interval_seconds", 30),
             deleteRemote = prefs.getBoolean("delete_remote", false),
             autoSync = prefs.getBoolean("auto_sync", false),
+            deviceId = identity.id,
+            deviceName = identity.name,
+            deviceType = identity.type,
         )
     }
 
+    fun deviceIdentity(): DeviceIdentity {
+        val id = DeviceIdentityDefaults.stableId(prefs.getString("device_id", null))
+        val name = prefs.getString("device_name", null)?.trim().takeUnless { it.isNullOrEmpty() }
+            ?: DeviceIdentityDefaults.defaultName(Build.MANUFACTURER.orEmpty(), Build.MODEL.orEmpty())
+        val type = prefs.getString("device_type", "android")?.trim().takeUnless { it.isNullOrEmpty() } ?: "android"
+        prefs.edit()
+            .putString("device_id", id)
+            .putString("device_name", name)
+            .putString("device_type", type)
+            .apply()
+        return DeviceIdentity(id, name, type)
+    }
+
     fun save(config: FreeCloudConfig) {
+        val identity = if (config.deviceId.isBlank()) deviceIdentity() else DeviceIdentity(
+            config.deviceId,
+            config.deviceName.ifBlank { DeviceIdentityDefaults.defaultName(Build.MANUFACTURER.orEmpty(), Build.MODEL.orEmpty()) },
+            config.deviceType.ifBlank { "android" },
+        )
         prefs.edit()
             .putString("domain", config.domain)
             .putString("drive_name", config.driveName)
@@ -42,6 +65,9 @@ class ConfigStore(context: Context) {
             .putInt("interval_seconds", config.intervalSeconds)
             .putBoolean("delete_remote", config.deleteRemote)
             .putBoolean("auto_sync", config.autoSync)
+            .putString("device_id", identity.id)
+            .putString("device_name", identity.name)
+            .putString("device_type", identity.type)
             .remove(LEGACY_PASSWORD_KEY)
             .apply()
         savePassword(config.password)

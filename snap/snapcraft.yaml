@@ -57,6 +57,7 @@ parts:
       FClogo.png: freecloud/FClogo.png
       icon.png: freecloud/icon.png
       logo.png: freecloud/logo.png
+      images: freecloud/images
       snap/local/freecloud-snap: bin/freecloud-snap
       snap/local/freecloud-cli-snap: bin/freecloud-cli-snap
       snap/gui/freecloud.desktop: snap/gui/freecloud.desktop

@@ -1,5 +1,22 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/freecloud_lifecycle.php';
+
+if (!defined('FC_LIFECYCLE_VERSION') || FC_LIFECYCLE_VERSION < 2) {
+    http_response_code(503);
+    header('Content-Type: text/plain; charset=utf-8');
+    exit('Server files are out of sync: freecloud_lifecycle.php is older than freecloud.php. Deploy both together.');
+}
+
+// Unreadable critical metadata stops the request before anything is written.
+set_exception_handler(static function (Throwable $error): void {
+    error_log('FreeCloud web UI: ' . $error);
+    http_response_code($error instanceof FcCorruptMetadataException ? 503 : 500);
+    header('Content-Type: text/plain; charset=utf-8');
+    echo $error instanceof FcCorruptMetadataException
+        ? $error->getMessage() . '. FreeCloud stopped without changing it; restore the file from a backup.'
+        : 'Internal server error.';
+});
 
 $baseDir = __DIR__;
 $sessionDir = $baseDir . '/freecloud_sessions';
@@ -58,13 +75,9 @@ function loadConfig(string $configFile): ?array
 
 function loadJsonMap(string $path): array
 {
-    if (!is_file($path)) {
-        return [];
-    }
-
-    $raw = file_get_contents($path);
-    $data = json_decode(is_string($raw) ? $raw : '', true);
-    return is_array($data) ? $data : [];
+    // Missing files are empty; unreadable critical metadata throws instead of
+    // masquerading as an empty catalog (see fc_read_json_file).
+    return fc_read_json_file($path);
 }
 
 function saveConfig(string $configFile, string $name, string $password): bool
@@ -75,11 +88,7 @@ function saveConfig(string $configFile, string $name, string $password): bool
         'created_at' => time(),
     ];
 
-    $saved = file_put_contents($configFile, json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX) !== false;
-    if ($saved) {
-        @chmod($configFile, 0600);
-    }
-    return $saved;
+    return fc_save_json_atomic($configFile, $config);
 }
 
 function authRequired(?array $config): bool
@@ -253,6 +262,11 @@ function entryInfo(string $root, string $absolutePath): ?array
     if ($relative === '.htaccess' || str_starts_with($relative, '.htaccess/')) {
         return null;
     }
+    // Non-UTF-8 names stay on disk untouched but cannot be catalogued, and
+    // in-flight upload/install temp files are never user content.
+    if (!fc_is_valid_utf8($relative) || fc_is_internal_temp_name(basename($real))) {
+        return null;
+    }
 
     $isDir = is_dir($real);
     return [
@@ -328,13 +342,18 @@ function uniqueLocations(array $locations): array
 
 function metadataEntries(string $root, string $filesFile): array
 {
+    $tombstones = loadJsonMap(__DIR__ . '/freecloud_meta/tombstones.json');
     $entries = physicalMetadataEntries($root);
+    foreach (array_keys($entries) as $physicalPath) {
+        if (fc_catalog_path_is_tombstoned((string) $physicalPath, $tombstones)) unset($entries[$physicalPath]);
+    }
     foreach (loadJsonMap($filesFile) as $path => $entry) {
         if (!is_array($entry)) {
             continue;
         }
         $cleanPath = normalizeRelativePath((string) ($entry['path'] ?? $path));
-        if ($cleanPath === '' || (bool) ($entry['deleted'] ?? false)) {
+        if ($cleanPath === '' || (bool) ($entry['deleted'] ?? false)
+            || fc_catalog_path_is_tombstoned($cleanPath, $tombstones)) {
             continue;
         }
         $locations = [];
@@ -364,7 +383,7 @@ function entryHasWebServerLocation(array $entry): bool
 {
     $locations = $entry['locations'] ?? [];
     if (!is_array($locations) || $locations === []) {
-        return true;
+        return false;
     }
     foreach ($locations as $location) {
         if (
@@ -382,7 +401,7 @@ function availableFromLabel(array $entry): string
 {
     $locations = $entry['locations'] ?? [];
     if (!is_array($locations) || $locations === []) {
-        return 'Web Server';
+        return 'Unavailable';
     }
 
     $labels = [];
@@ -1080,6 +1099,10 @@ if ($realStorageRoot === false) {
     exit('Could not prepare freecloud_files.');
 }
 $filesFile = $metaRoot . '/files.json';
+$devicesFile = $metaRoot . '/devices.json';
+$tombstonesFile = $metaRoot . '/tombstones.json';
+$reconcileRoot = $metaRoot . '/reconciliation';
+$transferRoot = $metaRoot . '/transfers';
 
 $config = loadConfig($configFile);
 $setupError = '';
@@ -1089,6 +1112,23 @@ $iconUrl  = resolveAssetUrl('icon.png') ?? resolveAssetUrl('favicon.ico');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     requireCsrfToken();
+    // Names that are not UTF-8 cannot be stored in the catalog; refuse them
+    // before any file or metadata is written.
+    $validUtf8 = static function ($value) use (&$validUtf8): bool {
+        if (is_array($value)) {
+            foreach ($value as $key => $item) {
+                if ((is_string($key) && !fc_is_valid_utf8($key)) || !$validUtf8($item)) return false;
+            }
+            return true;
+        }
+        return !is_string($value) || fc_is_valid_utf8($value);
+    };
+    $uploadNames = array_map(static fn($file) => is_array($file) ? ($file['name'] ?? '') : '', $_FILES);
+    if (!$validUtf8($_POST) || !$validUtf8($_GET) || !$validUtf8($uploadNames)) {
+        http_response_code(400);
+        header('Content-Type: text/plain; charset=utf-8');
+        exit('File and folder names must be valid UTF-8.');
+    }
 }
 
 if ($config === null && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'setup') {
@@ -1217,6 +1257,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'save_file') {
         header('Content-Type: application/json; charset=utf-8');
         $targetPath = normalizeRelativePath((string) ($_POST['target_path'] ?? ''));
+        if (fc_catalog_path_is_tombstoned($targetPath, loadJsonMap($tombstonesFile))) {
+            http_response_code(410);
+            echo json_encode(['error' => 'This path has been globally deleted.']);
+            exit;
+        }
         $absoluteTarget = $targetPath === '' ? null : resolveExistingPath($realStorageRoot, $targetPath);
         if ($absoluteTarget === null || !is_file($absoluteTarget)) {
             http_response_code(404);
@@ -1228,13 +1273,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             echo json_encode(['error' => 'This file type cannot be edited.']);
             exit;
         }
-        if (file_put_contents($absoluteTarget, (string) ($_POST['content'] ?? ''), LOCK_EX) === false) {
+        // Write a complete temp copy and rename it, so a failed save never
+        // leaves a truncated file in place of the original.
+        $perms = @fileperms($absoluteTarget);
+        if (!fc_write_file_atomic($absoluteTarget, (string) ($_POST['content'] ?? ''), $perms === false ? null : ($perms & 0777))) {
             http_response_code(500);
             echo json_encode(['error' => 'Could not save file.']);
             exit;
         }
         echo json_encode(['ok' => true]);
         exit;
+    }
+
+    if ($action === 'global_delete') {
+        $targetPath = normalizeRelativePath((string) ($_POST['target_path'] ?? ''));
+        $recursive = (string) ($_POST['recursive'] ?? '0') === '1';
+        if ($targetPath === '') redirectToDrive($currentPath, 'That item does not exist anymore.', 'error', $sort);
+        $lock = fopen($metaRoot . '/catalog.lock', 'c+');
+        if ($lock === false || !flock($lock, LOCK_EX)) redirectToDrive($currentPath, 'Could not lock the FreeCloud catalog.', 'error', $sort);
+        try {
+            $result = fc_begin_global_delete(
+                $targetPath, $recursive, loadJsonMap($filesFile), physicalMetadataEntries($realStorageRoot),
+                loadJsonMap($devicesFile), loadJsonMap($tombstonesFile), $reconcileRoot, $transferRoot
+            );
+            if (!fc_save_json_atomic($tombstonesFile, $result['tombstones'])
+                || !fc_save_json_atomic($filesFile, $result['files'])) {
+                throw new RuntimeException('Could not save global-delete metadata.');
+            }
+            $result['jobs'] = fc_ensure_global_delete_jobs($result['tombstone'], $reconcileRoot);
+            $webJob = $result['jobs']['web_server'] ?? null;
+            $absoluteTarget = resolveExistingPath($realStorageRoot, $targetPath);
+            if ($absoluteTarget !== null && ($absoluteTarget === $realStorageRoot || !deletePathRecursively($absoluteTarget))) {
+                throw new RuntimeException('Could not remove the Web Server copy; deletion remains pending.');
+            }
+            if (is_array($webJob)) {
+                fc_apply_global_delete_ack($webJob, 'web_server', $filesFile, $tombstonesFile,
+                    $reconcileRoot . '/' . (string) $webJob['job_id'] . '.json');
+            }
+        } catch (Throwable $error) {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+            redirectToDrive($currentPath, $error->getMessage(), 'error', $sort);
+        }
+        flock($lock, LOCK_UN);
+        fclose($lock);
+        redirectToDrive($currentPath, 'Global deletion queued for all devices.', 'success', $sort);
     }
 
     if ($action === 'delete') {
@@ -1275,6 +1358,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $relativePaths = [];
     }
 
+    $tombstones = loadJsonMap($tombstonesFile);
+    foreach ($uploads as $index => $upload) {
+        if ($upload['error'] === UPLOAD_ERR_NO_FILE || $upload['error'] !== UPLOAD_ERR_OK) continue;
+        $relativeName = normalizeRelativePath((string) ($relativePaths[$index] ?? $upload['name']));
+        $virtualDestination = normalizeRelativePath(($currentPath !== '' ? $currentPath . '/' : '') . $relativeName);
+        if ($relativeName !== '' && fc_catalog_path_is_tombstoned($virtualDestination, $tombstones)) {
+            redirectToDrive($currentPath, 'An upload path was globally deleted and cannot be restored.', 'error', $sort);
+        }
+    }
+
     $savedCount = 0;
     foreach ($uploads as $index => $upload) {
         if ($upload['error'] === UPLOAD_ERR_NO_FILE) {
@@ -1290,6 +1383,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $destination = $targetDirectory . '/' . $relativeName;
+        $virtualDestination = normalizeRelativePath(($currentPath !== '' ? $currentPath . '/' : '') . $relativeName);
+        if (fc_catalog_path_is_tombstoned($virtualDestination, $tombstones)) {
+            redirectToDrive($currentPath, 'That path was globally deleted and cannot be restored by this upload.', 'error', $sort);
+        }
         $destinationDir = dirname($destination);
         if (!is_dir($destinationDir) && !mkdir($destinationDir, 0775, true) && !is_dir($destinationDir)) {
             redirectToDrive($currentPath, 'Could not create the target folder.', 'error', $sort);
@@ -1300,7 +1397,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirectToDrive($currentPath, 'An upload path was rejected.', 'error', $sort);
         }
 
-        if (!move_uploaded_file($upload['tmp_name'], $destination)) {
+        // Move into a temp sibling first and rename only after the size is
+        // verified, so an existing file is never replaced by a partial one.
+        $temp = fc_upload_temp_path($destination);
+        if (!move_uploaded_file($upload['tmp_name'], $temp)
+            || filesize($temp) !== (int) ($upload['size'] ?? -1)
+            || !fc_commit_upload_temp($temp, $destination, 0)) {
+            @unlink($temp);
             redirectToDrive($currentPath, 'A file could not be saved.', 'error', $sort);
         }
 
@@ -1488,14 +1591,6 @@ if ($parentPath === '.') {
                             <?php endif; ?>
                             <?php if ($entry['hasWebServerCopy']): ?>
                                 <a class="button-link" href="freecloud_download.php?path=<?= rawurlencode($entry['path']) ?>">Download</a>
-                                <form method="post">
-                                    <input type="hidden" name="action" value="delete">
-                                    <input type="hidden" name="csrf_token" value="<?= h(csrfToken()) ?>">
-                                    <input type="hidden" name="current_path" value="<?= h($currentPath) ?>">
-                                    <input type="hidden" name="target_path" value="<?= h($entry['path']) ?>">
-                                    <input type="hidden" name="sort" value="<?= h($sort) ?>">
-                                    <button class="button danger delete-button" type="submit" data-name="<?= h($entry['name']) ?>">Delete</button>
-                                </form>
                             <?php else: ?>
                                 <?php if (!$entry['isDir']): ?>
                                     <form method="post" action="freecloud_transfer.php?action=create">
@@ -1507,6 +1602,15 @@ if ($parentPath === '.') {
                                     <span class="action-note">Node only</span>
                                 <?php endif; ?>
                             <?php endif; ?>
+                            <form method="post">
+                                <input type="hidden" name="action" value="global_delete">
+                                <input type="hidden" name="csrf_token" value="<?= h(csrfToken()) ?>">
+                                <input type="hidden" name="current_path" value="<?= h($currentPath) ?>">
+                                <input type="hidden" name="target_path" value="<?= h($entry['path']) ?>">
+                                <input type="hidden" name="recursive" value="<?= $entry['isDir'] ? '1' : '0' ?>">
+                                <input type="hidden" name="sort" value="<?= h($sort) ?>">
+                                <button class="button danger delete-button" type="submit" data-name="<?= h($entry['name']) ?>">Delete</button>
+                            </form>
                         </div>
                         <?php if (($entry['isImage'] || $entry['isVideo']) && $entry['previewUrl'] !== null): ?>
                             <div class="preview" id="<?= h($previewId) ?>">

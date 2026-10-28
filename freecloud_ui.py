@@ -38,10 +38,27 @@ BACKGROUND_LOG_PATH = cli.STATE_DIR / "sync.log"
 TRAY_LOG_PATH = cli.STATE_DIR / "tray.log"
 UI_ERROR_LOG_PATH = cli.STATE_DIR / "ui_error.log"
 REMOTE_TREE_CACHE_PATH = cli.STATE_DIR / "remote_tree_cache.json"
+GLOBAL_DELETE_OVERLAY_PATH = cli.STATE_DIR / "global_delete_overlay.json"
 STARTUP_PROFILE_PATH = cli.STATE_DIR / "startup_profile.log"
+ASSET_DIR = BASE_DIR / "images"
 LOGO_PATH = BASE_DIR / "logo.png"
-ICON_PATH = BASE_DIR / "icon.png"
-TRAY_ICON_PATH = BASE_DIR / "FClogo.png" if (BASE_DIR / "FClogo.png").is_file() else ICON_PATH
+APP_ICON_PATH = BASE_DIR / "FClogo.png" if (BASE_DIR / "FClogo.png").is_file() else BASE_DIR / "icon.png"
+TRAY_ICON_PATH = APP_ICON_PATH
+ACTION_ICON_FILES = {
+    "open_local_folder": "openlocalfolder.png",
+    "new_folder": "newfolder.png",
+    "upload": "upload.png",
+    "view_on_web": "viewonweb.png",
+    "refresh": "refresh.png",
+    "start_sync": "startsync.png",
+    "stop_sync": "stopsync.png",
+    "settings": "settings.png",
+}
+NAVIGATION_ICON_FILES = {
+    "nav_up": "uoarrow.png",
+    "nav_back": "leftarrow.png",
+    "nav_forward": "rightarrow.png",
+}
 RUN_SCRIPT_PATH = BASE_DIR / "Run_Mac_Linux.sh"
 WINDOWS_CREATION_FLAGS = sum(
     getattr(subprocess, name, 0)
@@ -75,6 +92,7 @@ COLORS = {
 
 STARTUP_STARTED_AT = time.perf_counter()
 MAIN_SCROLLBAR_OVERFLOW_TOLERANCE = 8
+FILE_TABLE_COLUMNS = ("name", "size", "type", "modified")
 
 
 class TrayMenuActivationTracker:
@@ -171,6 +189,42 @@ def load_scaled_image(path: Path, max_width: int, max_height: int) -> tk.PhotoIm
         math.ceil(image.height() / max_height) if max_height > 0 else 1,
     )
     return image if scale <= 1 else image.subsample(scale, scale)
+
+
+class DesktopIconSet:
+    """Canonical, package-relative FreeCloud desktop icon loader."""
+
+    def __init__(self) -> None:
+        self.images: dict[tuple[str, int], tk.PhotoImage | None] = {}
+
+    def action(self, name: str, size: int = 20) -> tk.PhotoImage | None:
+        key = (name, size)
+        if key not in self.images:
+            filename = ACTION_ICON_FILES.get(name)
+            self.images[key] = load_scaled_image(ASSET_DIR / filename, size, size) if filename else None
+        return self.images[key]
+
+    def toolbar_action(self, name: str, size: int = 35) -> tk.PhotoImage | None:
+        """Scale toolbar artwork close to its requested size using Tk's crisp pixel scaling."""
+        key = (f"toolbar:{name}", size)
+        if key not in self.images:
+            filename = ACTION_ICON_FILES.get(name)
+            path = ASSET_DIR / filename if filename else None
+            image = tk.PhotoImage(file=str(path)) if path and path.is_file() else None
+            if image is not None and max(image.width(), image.height()) > size:
+                zoom = 3
+                x_step = max(1, round(image.width() * zoom / size))
+                y_step = max(1, round(image.height() * zoom / size))
+                image = image.zoom(zoom, zoom).subsample(x_step, y_step)
+            self.images[key] = image
+        return self.images[key]
+
+    def navigation(self, name: str, size: int = 28) -> tk.PhotoImage | None:
+        key = (name, size)
+        if key not in self.images:
+            filename = NAVIGATION_ICON_FILES.get(name)
+            self.images[key] = load_scaled_image(ASSET_DIR / filename, size, size) if filename else None
+        return self.images[key]
 
 
 def process_is_running(pid: int) -> bool:
@@ -351,6 +405,8 @@ class SoftButton(tk.Canvas):
         disabledforeground: str | None = None,
         highlightthickness: int = 0,
         font_size: int | None = None,
+        image: tk.PhotoImage | None = None,
+        image_above: bool = False,
         **kwargs: object,
     ) -> None:
         super().__init__(
@@ -376,6 +432,8 @@ class SoftButton(tk.Canvas):
         self.text = text
         self.textvariable = textvariable
         self.font_size = font_size
+        self.image = image
+        self.image_above = image_above
         self.font_size_delta = 0
         self._trace_id: str | None = None
         self._hovering = False
@@ -442,6 +500,9 @@ class SoftButton(tk.Canvas):
             self.hover_bg = str(options.pop("activebackground"))
         if "disabledforeground" in options:
             self.disabled_fg = str(options.pop("disabledforeground"))
+        if "image" in options:
+            image = options.pop("image")
+            self.image = image if isinstance(image, tk.PhotoImage) else None
         if "highlightbackground" in options:
             self.border = str(options.pop("highlightbackground"))
         if "highlightcolor" in options:
@@ -489,12 +550,23 @@ class SoftButton(tk.Canvas):
             )
         else:
             font_size = self.font_size or (21 if len(self.text) <= 2 and height >= 36 else 10)
+            font = tkfont.Font(font=("TkDefaultFont", max(6, font_size + self.font_size_delta), "bold"))
+            text_x = width // 2
+            if self.image is not None:
+                if self.image_above:
+                    self.create_image(width // 2, max(13, height // 2 - 10), image=self.image)
+                else:
+                    gap = 6
+                    total_width = self.image.width() + gap + font.measure(self.text)
+                    image_x = max(self.image.width() // 2 + 4, (width - total_width) // 2 + self.image.width() // 2)
+                    self.create_image(image_x, height // 2, image=self.image)
+                    text_x = image_x + self.image.width() // 2 + gap + font.measure(self.text) // 2
             self.create_text(
-                width // 2,
-                height // 2,
+                text_x,
+                height - 11 if self.image is not None and self.image_above else height // 2,
                 text=self.text,
                 fill=text_color,
-                font=("TkDefaultFont", max(6, font_size + self.font_size_delta), "bold"),
+                font=font,
             )
 
     def adjust_font_size(self, step: int) -> None:
@@ -515,7 +587,90 @@ class SoftButton(tk.Canvas):
         ]
 
 
+class PlacementToggle(tk.Canvas):
+    """Compact presentation-only switch for an existing placement callback."""
+
+    def __init__(self, parent: tk.Widget, selected: bool, command: object) -> None:
+        super().__init__(
+            parent, width=38, height=20, bg=parent.cget("bg"), bd=0,
+            highlightthickness=0, cursor="hand2",
+        )
+        self.selected = selected
+        self.command = command
+        self.bind("<Button-1>", self._click)
+        self.bind("<Configure>", lambda _event: self.redraw())
+        self.redraw()
+
+    def _click(self, _event: tk.Event[tk.Misc]) -> None:
+        if callable(self.command):
+            self.command()
+
+    def redraw(self) -> None:
+        self.delete("all")
+        track = COLORS["accent"] if self.selected else "#b9c2c9"
+        self.create_oval(1, 1, 19, 19, fill=track, outline=track)
+        self.create_oval(19, 1, 37, 19, fill=track, outline=track)
+        self.create_rectangle(10, 1, 28, 19, fill=track, outline=track)
+        thumb_x = 27 if self.selected else 11
+        self.create_oval(
+            thumb_x - 8, 2, thumb_x + 8, 18,
+            fill="#ffffff", outline="#8fa1ae", width=1,
+        )
+
+
+class NavigationButton(tk.Canvas):
+    """Compact navigation button using the supplied FreeCloud artwork."""
+
+    def __init__(self, parent: tk.Widget, image: tk.PhotoImage | None, command: object) -> None:
+        super().__init__(parent, width=40, height=38, bg=parent.cget("bg"), bd=0, highlightthickness=0)
+        self.image = image
+        self.command = command
+        self.state = tk.NORMAL
+        self.hovering = False
+        self.bind("<Button-1>", self.on_click)
+        self.bind("<Enter>", lambda _event: self.set_hover(True))
+        self.bind("<Leave>", lambda _event: self.set_hover(False))
+        self.bind("<Configure>", lambda _event: self.redraw())
+        self.configure_cursor()
+        self.redraw()
+
+    def set_hover(self, hovering: bool) -> None:
+        self.hovering = hovering
+        self.redraw()
+
+    def on_click(self, _event: tk.Event[tk.Misc]) -> None:
+        if self.state == tk.NORMAL and callable(self.command):
+            self.command()
+
+    def configure(self, cnf: dict[str, object] | None = None, **kw: object) -> object:
+        options = dict(cnf or {})
+        options.update(kw)
+        if "state" in options:
+            self.state = str(options.pop("state"))
+        result = super().configure(**options)
+        self.configure_cursor()
+        self.redraw()
+        return result
+
+    config = configure
+
+    def configure_cursor(self) -> None:
+        super().configure(cursor="hand2" if self.state == tk.NORMAL else "")
+
+    def redraw(self) -> None:
+        self.delete("all")
+        if self.hovering and self.state == tk.NORMAL:
+            self.create_rectangle(1, 1, 39, 37, fill="#e8f2f8", outline=COLORS["line_strong"])
+        if self.image is not None:
+            self.create_image(20, 19, image=self.image)
+
+
 class FreeCloudUi:
+    RECONCILIATION_POLL_INTERVAL_MS = 30_000
+    RECONCILIATION_RETRY_INTERVAL_MS = 5_000
+    LOCAL_MANIFEST_SCAN_INTERVAL_MS = 20_000
+    LOCAL_MANIFEST_DEBOUNCE_MS = 5_000
+
     def __init__(self, root: tk.Tk) -> None:
         startup_log("FreeCloudUi init started")
         self.root = root
@@ -523,6 +678,7 @@ class FreeCloudUi:
         self.output_queue: queue.Queue[str | None] = queue.Queue()
         self.logo_image: tk.PhotoImage | None = None
         self.icon_image: tk.PhotoImage | None = None
+        self.icons = DesktopIconSet()
         self.menu_bar: tk.Menu | None = None
         self.widget_font_overrides: dict[str, tkfont.Font] = {}
         self.style_font_overrides: dict[str, tkfont.Font] = {}
@@ -549,9 +705,29 @@ class FreeCloudUi:
         self.remote_back_stack: list[str] = []
         self.remote_forward_stack: list[str] = []
         self.remote_manifest_cache: list[dict[str, object]] = []
+        self.optimistic_global_deletions = self.load_global_delete_overlay()
         self.device_registry: list[dict[str, object]] = []
         self.device_columns: list[dict[str, str]] = []
         self.device_columns_signature: tuple[str, ...] = ()
+        self.placement_updates: set[tuple[str, str]] = set()
+        self.desired_placement_overrides: dict[tuple[str, str], bool] = {}
+        self.placement_status_overrides: dict[tuple[str, str], str] = {}
+        self.reconciliation_lock = threading.Lock()
+        self.reconciliation_poll_after_id: str | None = None
+        self.reconciliation_poll_in_flight = False
+        self.reconciliation_stop = threading.Event()
+        self.desktop_manifest_dirty = False
+        # A complete manifest can be accepted even if the follow-up planning
+        # request fails. Keep that planning work pending independently from
+        # the inventory signature so the next periodic scan retries it.
+        self.desktop_reconciliation_plan_pending = False
+        self.desktop_manifest_signature: str | None = None
+        self.local_manifest_candidate_signature: str | None = None
+        self.local_manifest_scan_after_id: str | None = None
+        self.local_manifest_scan_in_flight = False
+        self.desktop_manifest_last_scan_at = 0.0
+        self.selected_remote_entry: dict[str, object] | None = None
+        self.current_folder_placement: dict[str, object] | None = None
         self.remote_manifest_refreshing = False
         self.remote_manifest_refresh_after_id: str | None = None
         self.remote_manifest_refresh_started_at = 0.0
@@ -572,6 +748,7 @@ class FreeCloudUi:
         self.storage_detail_var = tk.StringVar(value="Calculating...")
         self.storage_refreshing = False
         self.storage_last_refreshed_at = 0.0
+        self.desktop_manifest_last_published_at = 0.0
         self.rendered_cache_notice = False
         self.file_browser_open = True
         self.show_sync_activity_var = tk.BooleanVar(value=False)
@@ -620,8 +797,6 @@ class FreeCloudUi:
 
         self.setup_frame = self.build_setup_card(self.content)
         startup_log("setup card built")
-        self.actions_frame = self.build_actions_card(self.content)
-        startup_log("actions ribbon built")
         self.files_frame = self.build_files_card(self.content)
         startup_log("files panel built")
         self.output_frame = self.build_output_card(self.content)
@@ -633,12 +808,17 @@ class FreeCloudUi:
         root.after(200, self.poll_open_ui_request)
         root.after(150, self.drain_output)
         root.after(500, launch_tray_indicator)
+        root.after(500, self.refresh_toolbar_sync_state)
         root.after(1200, self.refresh_startup_entry_if_enabled)
         has_saved_setup = bool(self.config_data())
         self.refresh_setup_visibility()
         startup_log(f"initial visibility set, saved_setup={has_saved_setup}")
         if has_saved_setup and self.file_browser_open:
             root.after(250, self.load_cached_files_after_startup)
+        if has_saved_setup:
+            self.schedule_reconciliation_poll(5_000)
+            root.after(4_000, self.schedule_local_manifest_scan)
+            root.after(1_000, self.start_sync_if_needed)
         if self.font_size_delta:
             self.apply_overall_font_size_step(self.font_size_delta)
         startup_log("FreeCloudUi init finished")
@@ -726,13 +906,13 @@ class FreeCloudUi:
         self.update_summary_text(config)
 
     def load_logo_image(self) -> None:
-        self.logo_image = load_scaled_image(LOGO_PATH, 96, 72)
+        self.logo_image = load_scaled_image(LOGO_PATH, 77, 61)
         logo_label = getattr(self, "logo_display_label", None)
         if self.logo_image is not None and logo_label is not None:
             logo_label.configure(image=self.logo_image, text="")
 
     def load_window_icon(self) -> None:
-        self.icon_image = load_scaled_image(ICON_PATH, 128, 128)
+        self.icon_image = load_scaled_image(APP_ICON_PATH, 128, 128)
         if self.icon_image is not None:
             try:
                 self.root.iconphoto(True, self.icon_image)
@@ -764,6 +944,8 @@ class FreeCloudUi:
             activeborderwidth=0,
             font=("TkDefaultFont", 10),
         )
+        self.menu_spacer_image = tk.PhotoImage(width=20, height=1)
+        menu_bar.add_command(label="", image=self.menu_spacer_image, state=tk.DISABLED)
 
         file_menu = tk.Menu(menu_bar, **menu_options)
         file_menu.add_command(label="Open Local Folder", command=self.open_local_folder)
@@ -782,6 +964,7 @@ class FreeCloudUi:
 
         edit_menu = tk.Menu(menu_bar, **menu_options)
         edit_menu.add_command(label="Edit Settings", command=self.edit_settings)
+        edit_menu.add_command(label="Manage Devices", command=self.open_device_manager)
         edit_menu.add_separator()
         edit_menu.add_command(label="Increase Font Size ++", command=self.increase_font_size)
         edit_menu.add_command(label="Decrease Font Size --", command=self.decrease_font_size)
@@ -803,6 +986,123 @@ class FreeCloudUi:
 
         self.menu_bar = menu_bar
         self.root.config(menu=menu_bar)
+
+    @staticmethod
+    def format_last_seen(value: object) -> str:
+        try:
+            timestamp = int(value or 0)
+        except (TypeError, ValueError):
+            timestamp = 0
+        return datetime.fromtimestamp(timestamp).strftime("%b %d, %Y %I:%M %p") if timestamp else "Unknown"
+
+    @staticmethod
+    def device_can_be_removed(device_id: str, desktop_device_id: str) -> bool:
+        return bool(device_id) and device_id not in {"web_server", desktop_device_id}
+
+    def open_device_manager(self) -> None:
+        window = tk.Toplevel(self.root)
+        window.title("Manage FreeCloud Devices")
+        window.geometry("850x430")
+        window.minsize(700, 340)
+        window.configure(bg=COLORS["bg"])
+
+        tk.Label(
+            window,
+            text="Devices register automatically when they connect to FreeCloud.",
+            bg=COLORS["bg"], fg=COLORS["muted"], anchor="w",
+        ).pack(fill=tk.X, padx=16, pady=(14, 8))
+        columns = ("name", "type", "device_id", "status", "last_seen", "this_device")
+        tree = ttk.Treeview(window, columns=columns, show="headings", selectmode="browse")
+        headings = {
+            "name": "Display name", "type": "Type", "device_id": "Device ID",
+            "status": "Status", "last_seen": "Last seen", "this_device": "This device",
+        }
+        widths = {"name": 150, "type": 90, "device_id": 265, "status": 70, "last_seen": 160, "this_device": 80}
+        for key in columns:
+            tree.heading(key, text=headings[key], anchor="w")
+            tree.column(key, width=widths[key], minwidth=60, anchor="w", stretch=key in {"name", "device_id"})
+        tree.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 10))
+
+        desktop_id = str(cli.load_device_config().get("device_id") or "")
+        devices_by_item: dict[str, dict[str, object]] = {}
+
+        def populate(devices: list[dict[str, object]]) -> None:
+            tree.delete(*tree.get_children(""))
+            devices_by_item.clear()
+            for device in sorted(devices, key=lambda item: (str(item.get("name") or "").lower(), str(item.get("device_id") or ""))):
+                device_id = str(device.get("device_id") or "")
+                item = tree.insert("", tk.END, values=(
+                    str(device.get("name") or device_id), str(device.get("type") or "device"), device_id,
+                    "Online" if self.device_is_online(device) else "Offline",
+                    self.format_last_seen(device.get("last_seen_at")), "Yes" if device_id == desktop_id else "",
+                ))
+                devices_by_item[item] = device
+            web_item = tree.insert("", tk.END, values=("Web Server", "web_server", "web_server", "Online", "—", ""))
+            devices_by_item[web_item] = {"device_id": "web_server", "name": "Web Server", "type": "web_server"}
+
+        def selected_device() -> dict[str, object] | None:
+            selected = tree.selection()
+            return devices_by_item.get(selected[0]) if selected else None
+
+        def refresh() -> None:
+            try:
+                response = self.current_client().request("list_devices", {"_": time.time_ns()})
+                devices = [item for item in response.get("devices", []) if isinstance(item, dict)]
+            except Exception as exc:
+                messagebox.showerror("Manage Devices", str(exc), parent=window)
+                return
+            self.device_registry = devices
+            self.configure_device_columns()
+            self.save_remote_tree_cache()
+            populate(devices)
+
+        def rename_selected() -> None:
+            device = selected_device()
+            if device is None or str(device.get("device_id") or "") == "web_server":
+                return
+            device_id = str(device.get("device_id") or "")
+            name = simpledialog.askstring(
+                "Rename Device", "Display name:", initialvalue=str(device.get("name") or ""), parent=window
+            )
+            if name is None:
+                return
+            try:
+                self.current_client().rename_device(device_id, name.strip())
+            except Exception as exc:
+                messagebox.showerror("Rename Device", str(exc), parent=window)
+                return
+            refresh()
+
+        def remove_selected() -> None:
+            device = selected_device()
+            if device is None:
+                return
+            device_id = str(device.get("device_id") or "")
+            if not self.device_can_be_removed(device_id, desktop_id):
+                messagebox.showinfo("Remove Device", "This provider is protected and cannot be removed here.", parent=window)
+                return
+            name = str(device.get("name") or device_id)
+            warning = "This removes registration and placement metadata only. Physical files will not be deleted."
+            capabilities = [str(value) for value in device.get("capabilities", [])]
+            if "storage_node" in capabilities or str(device.get("type") or "") in {"raspberry_pi", "local_node"}:
+                warning += "\n\nWARNING: This storage node's published metadata and sync rules will be removed. Its physical files remain untouched."
+            if not messagebox.askyesno("Remove Device", f"Remove {name}?\n\n{warning}", parent=window):
+                return
+            try:
+                self.current_client().remove_device(device_id)
+            except Exception as exc:
+                messagebox.showerror("Remove Device", str(exc), parent=window)
+                return
+            refresh()
+            self.refresh_current_folder_in_background(show_errors=True)
+
+        buttons = tk.Frame(window, bg=COLORS["bg"])
+        buttons.pack(fill=tk.X, padx=16, pady=(0, 14))
+        ttk.Button(buttons, text="Rename", command=rename_selected).pack(side=tk.LEFT)
+        ttk.Button(buttons, text="Remove", command=remove_selected).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(buttons, text="Refresh", command=refresh).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(buttons, text="Close", command=window.destroy).pack(side=tk.RIGHT)
+        populate(self.device_registry)
 
     @staticmethod
     def adjusted_font_size(size: int, step: int) -> int:
@@ -956,9 +1256,10 @@ class FreeCloudUi:
         )
         header.pack(fill=tk.X)
 
-        header.grid_columnconfigure(0, weight=1)
-        header.grid_columnconfigure(1, weight=0)
+        header.grid_columnconfigure(0, weight=0)
+        header.grid_columnconfigure(1, weight=1)
         header.grid_columnconfigure(2, weight=0)
+        header.grid_columnconfigure(3, weight=0)
 
         brand = tk.Frame(header, bg=COLORS["panel"])
         brand.grid(row=0, column=0, sticky="w")
@@ -970,19 +1271,15 @@ class FreeCloudUi:
             fg=COLORS["accent"],
             font=("TkDefaultFont", 34),
         )
-        self.logo_display_label.pack(side=tk.LEFT, anchor="n", padx=(2, 14))
+        self.logo_display_label.pack(anchor="w", padx=(2, 8))
 
-        tk.Label(
-            brand,
-            text="Stop paying twice for hosting space.",
-            bg=COLORS["panel"],
-            fg=COLORS["muted"],
-            justify="left",
-            font=("TkDefaultFont", 10),
-        ).pack(side=tk.LEFT, anchor="n", pady=(2, 0))
+        toolbar_host = tk.Frame(header, bg="#fbfdff")
+        toolbar_host.grid(row=0, column=1, sticky="ew", padx=(4, 12))
+        self.actions_frame = self.build_actions_card(toolbar_host)
+        startup_log("actions ribbon built")
 
         self.header_setup_frame = tk.Frame(header, bg=COLORS["panel"])
-        self.header_setup_frame.grid(row=0, column=1, sticky="e", padx=(18, 24))
+        self.header_setup_frame.grid(row=0, column=2, sticky="e", padx=(4, 12))
         tk.Label(self.header_setup_frame, text="⚙  Saved Setup", bg=COLORS["panel"], fg=COLORS["ink"], font=("TkDefaultFont", 10, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 2))
         for row, (label, value) in enumerate((
             ("Drive:", self.saved_drive_var),
@@ -990,10 +1287,10 @@ class FreeCloudUi:
             ("Local:", self.saved_local_var),
         ), start=1):
             tk.Label(self.header_setup_frame, text=label, bg=COLORS["panel"], fg=COLORS["ink"], font=("TkDefaultFont", 9, "bold")).grid(row=row, column=0, sticky="w", padx=(0, 8))
-            tk.Label(self.header_setup_frame, textvariable=value, bg=COLORS["panel"], fg=COLORS["ink"], font=("TkDefaultFont", 9), width=28, anchor="w").grid(row=row, column=1, sticky="w")
+            tk.Label(self.header_setup_frame, textvariable=value, bg=COLORS["panel"], fg=COLORS["ink"], font=("TkDefaultFont", 9), width=20, anchor="w").grid(row=row, column=1, sticky="w")
 
         status_box = tk.Frame(header, bg=COLORS["panel"], highlightthickness=0)
-        status_box.grid(row=0, column=2, sticky="e", padx=(14, 4))
+        status_box.grid(row=0, column=3, sticky="e", padx=(8, 4))
         tk.Label(status_box, text="Status", bg=COLORS["panel"], fg=COLORS["ink"], font=("TkDefaultFont", 10, "bold")).pack(anchor="w")
         self.header_status_label = tk.Label(status_box, textvariable=self.status, bg=COLORS["panel"], fg=COLORS["muted"], font=("TkDefaultFont", 12, "bold"))
         self.header_status_label.pack(anchor="w", pady=(3, 0))
@@ -1405,18 +1702,18 @@ class FreeCloudUi:
         main = tk.Frame(body, bg=COLORS["panel"])
         main.grid_rowconfigure(1, weight=1)
         main.grid_columnconfigure(0, weight=1)
-        browser_panes.add(sidebar, minsize=180, width=238, stretch="never")
-        browser_panes.add(main, minsize=560, stretch="always")
+        browser_panes.add(sidebar, minsize=175, width=225, stretch="never")
+        browser_panes.add(main, minsize=440, stretch="always")
 
         toolbar = tk.Frame(main, bg=COLORS["panel"])
         toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 7))
         toolbar.grid_columnconfigure(3, weight=1)
 
-        self.back_button = self.nav_bubble_button(toolbar, "←", self.go_back_remote_folder)
-        self.back_button.grid(row=0, column=0, padx=(0, 3))
-        self.up_button = self.nav_bubble_button(toolbar, "↑", self.go_up_remote_folder, font_size=16)
-        self.up_button.grid(row=0, column=1, padx=(0, 3))
-        self.forward_button = self.nav_bubble_button(toolbar, "→", self.go_forward_remote_folder)
+        self.up_button = NavigationButton(toolbar, self.icons.navigation("nav_up"), self.go_up_remote_folder)
+        self.up_button.grid(row=0, column=0, padx=(0, 3))
+        self.back_button = NavigationButton(toolbar, self.icons.navigation("nav_back"), self.go_back_remote_folder)
+        self.back_button.grid(row=0, column=1, padx=(0, 3))
+        self.forward_button = NavigationButton(toolbar, self.icons.navigation("nav_forward"), self.go_forward_remote_folder)
         self.forward_button.grid(row=0, column=2, padx=(0, 8))
 
         self.path_entry = tk.Entry(
@@ -1433,9 +1730,7 @@ class FreeCloudUi:
         self.path_entry.grid(row=0, column=3, sticky="ew", ipady=7, padx=(0, 12))
         self.path_entry.bind("<Return>", self.go_to_path_from_entry)
 
-        self.toolbar_button(toolbar, "📁  New Folder", self.create_remote_folder, 118).grid(row=0, column=4, padx=(0, 6))
-        self.toolbar_button(toolbar, "↑  Upload", self.upload_remote_files, 100).grid(row=0, column=5, padx=(0, 6))
-        self.toolbar_button(toolbar, "☷  ˅", self.show_files_menu, 62).grid(row=0, column=6)
+        self.toolbar_button(toolbar, "☷  ˅", self.show_files_menu, 62).grid(row=0, column=4)
 
         list_shell = tk.Frame(main, bg=COLORS["panel"], highlightthickness=1, highlightbackground=COLORS["line"])
         list_shell.grid(row=1, column=0, sticky="nsew")
@@ -1468,9 +1763,9 @@ class FreeCloudUi:
         )
         self.files_tree = ttk.Treeview(
             list_shell,
-            columns=("name", "size", "type", "modified"),
+            columns=FILE_TABLE_COLUMNS,
             show="headings",
-            selectmode="browse",
+            selectmode="extended",
             style="FreeCloud.Files.Treeview",
         )
         self.files_tree.heading("name", text="Name", anchor="w")
@@ -1496,6 +1791,23 @@ class FreeCloudUi:
         files_xscrollbar.grid(row=1, column=0, sticky="ew")
         self.files_tree.configure(xscrollcommand=files_xscrollbar.set)
 
+        settings = tk.Frame(browser_panes, bg="#fbfdff", highlightthickness=1, highlightbackground=COLORS["line"])
+        settings.grid_columnconfigure(0, weight=1)
+        tk.Label(
+            settings, text="Device Sync Settings", bg="#fbfdff", fg=COLORS["ink"],
+            anchor="w", font=("TkDefaultFont", 10, "bold"), padx=12, pady=10,
+        ).grid(row=0, column=0, sticky="ew")
+        tk.Frame(settings, bg=COLORS["line"], height=1).grid(row=1, column=0, sticky="ew")
+        self.sync_settings_selected_var = tk.StringVar(value="Currently configuring: Nothing selected")
+        tk.Label(
+            settings, textvariable=self.sync_settings_selected_var, bg="#fbfdff", fg=COLORS["muted"],
+            anchor="w", justify="left", wraplength=210, font=("TkDefaultFont", 9), padx=12, pady=9,
+        ).grid(row=2, column=0, sticky="ew")
+        self.device_settings_body = tk.Frame(settings, bg="#fbfdff")
+        self.device_settings_body.grid(row=3, column=0, sticky="new", padx=12, pady=(0, 8))
+        browser_panes.add(settings, minsize=210, width=245, stretch="never")
+        self.render_device_settings()
+
         self.files_footer_var = tk.StringVar(value="")
         self.selection_detail_var = tk.StringVar(value="")
         footer = tk.Frame(card, bg=COLORS["panel"])
@@ -1516,62 +1828,77 @@ class FreeCloudUi:
 
     def build_actions_card(self, parent: tk.Widget) -> tk.Frame:
         card = tk.Frame(parent, bg="#fbfdff", highlightthickness=0)
-        card.pack(fill=tk.X, pady=(2, 5))
-        button_width = 152
-        button_gap = 8
-
-        self.open_local_button = self.make_action_button(
-            card,
-            "🗂\nOpen Local Folder",
-            self.open_local_folder,
-            "#fbfdff",
-            COLORS["ink"],
-            width=button_width,
-            height=60,
-        )
-        self.open_local_button.pack(side=tk.LEFT, padx=(0, button_gap))
+        card.pack(fill=tk.X)
+        buttons = tk.Frame(card, bg="#fbfdff")
+        buttons.pack(anchor="w")
+        button_gap = 3
 
         self.local_folder_button = self.make_action_button(
-            card,
-            "📁\nNew Folder",
-            self.create_local_folder,
+            buttons,
+            "New Folder",
+            self.create_remote_folder,
             "#fbfdff",
             COLORS["ink"],
-            width=button_width,
-            height=60,
+            width=82,
+            height=63,
+            icon_name="new_folder",
+            icon_size=35,
+            image_above=True,
         )
         self.local_folder_button.pack(side=tk.LEFT, padx=(0, button_gap))
 
+        self.upload_button = self.make_action_button(
+            buttons, "Upload", self.upload_remote_files, "#fbfdff", COLORS["ink"], width=64, height=63,
+            icon_name="upload", icon_size=35, image_above=True,
+        )
+        self.upload_button.pack(side=tk.LEFT, padx=(0, button_gap))
+
         self.view_web_button = self.make_action_button(
-            card,
-            "🌐\nView on Web",
+            buttons,
+            "View on Web",
             self.view_on_web,
             "#fbfdff",
             COLORS["ink"],
-            width=button_width,
-            height=60,
+            width=92,
+            height=63,
+            icon_name="view_on_web",
+            icon_size=35,
+            image_above=True,
         )
         self.view_web_button.pack(side=tk.LEFT, padx=(0, button_gap))
 
         self.refresh_button = self.make_action_button(
-            card,
-            "⟳\nRefresh",
+            buttons,
+            "Refresh",
             lambda: self.refresh_files(force_live=True),
             "#fbfdff",
             COLORS["accent_dark"],
-            width=button_width,
-            height=60,
+            width=68,
+            height=63,
+            icon_name="refresh",
+            icon_size=35,
+            image_above=True,
         )
         self.refresh_button.pack(side=tk.LEFT, padx=(0, button_gap))
 
+        self.sync_toolbar_button = self.make_action_button(
+            buttons, "Start Sync", self.start_sync, "#fbfdff", COLORS["ink"], width=78, height=63,
+            icon_name="start_sync", icon_size=35, image_above=True,
+        )
+        self.sync_toolbar_button.pack(side=tk.LEFT, padx=(0, button_gap))
+        self.update_toolbar_sync_button()
+
         self.settings_button = self.make_action_button(
-            card,
-            "⚙\nSettings",
+            buttons,
+            "Settings",
             self.edit_settings,
             "#fbfdff",
             COLORS["ink"],
-            width=button_width,
-            height=60,
+            width=70,
+            height=63,
+            icon_name="settings",
+            icon_size=35,
+            image_above=True,
         )
         self.settings_button.pack(side=tk.LEFT, padx=(0, button_gap))
 
@@ -1646,6 +1973,9 @@ class FreeCloudUi:
         state: str = tk.NORMAL,
         width: int = 146,
         height: int = 42,
+        icon_name: str | None = None,
+        icon_size: int = 20,
+        image_above: bool = False,
     ) -> SoftButton:
         return SoftButton(
             parent,
@@ -1663,12 +1993,21 @@ class FreeCloudUi:
             width=width,
             height=height,
             radius=13,
+            image=(
+                self.icons.toolbar_action(icon_name, icon_size)
+                if image_above
+                else self.icons.action(icon_name, icon_size)
+            ) if icon_name else None,
+            image_above=image_above,
         )
 
-    def toolbar_button(self, parent: tk.Widget, text: str, command: object, width: int) -> tk.Button:
+    def toolbar_button(self, parent: tk.Widget, text: str, command: object, width: int, icon_name: str | None = None) -> tk.Button:
+        icon = self.icons.action(icon_name, 18) if icon_name else None
         return tk.Button(
             parent,
             text=text,
+            image=icon,
+            compound=tk.LEFT,
             command=command if callable(command) else None,
             width=max(2, width // 10),
             relief="flat",
@@ -1681,22 +2020,6 @@ class FreeCloudUi:
             font=("TkDefaultFont", 10, "bold"),
             padx=8,
             pady=8,
-        )
-
-    def nav_bubble_button(self, parent: tk.Widget, text: str, command: object, font_size: int | None = None) -> SoftButton:
-        return SoftButton(
-            parent,
-            text=text,
-            command=command,
-            bg=COLORS["panel"],
-            fg=COLORS["ink"],
-            activebackground=COLORS["button_light_hover"],
-            highlightbackground=COLORS["panel"],
-            disabledforeground="#9fb5c7",
-            width=40,
-            height=38,
-            radius=8,
-            font_size=font_size,
         )
 
     def draw_clouds(self, canvas: tk.Canvas) -> None:
@@ -1728,10 +2051,10 @@ class FreeCloudUi:
             self.header_setup_frame.grid()
         if has_saved_setup and self.editing_settings:
             self.settings_button.command = self.show_dashboard
-            self.settings_button.configure(text="▦\nDashboard")
+            self.settings_button.configure(text="Files", image="")
         else:
             self.settings_button.command = self.edit_settings
-            self.settings_button.configure(text="⚙\nSettings")
+            self.settings_button.configure(text="Settings", image=self.icons.action("settings", 23))
         self.settings_button.configure(
             bg="#e5f1ff" if settings_selected else "#fbfdff",
             fg=COLORS["accent_dark"] if settings_selected else COLORS["ink"],
@@ -1748,12 +2071,12 @@ class FreeCloudUi:
             return
 
         if has_saved_setup and self.editing_settings:
-            self.setup_frame.pack(fill=tk.X, pady=(0, 14), after=self.actions_frame)
+            self.setup_frame.pack(fill=tk.X, pady=(0, 14))
             self.root.after_idle(self.update_canvas_window_height)
             return
 
         self.file_browser_open = True
-        self.setup_frame.pack(fill=tk.X, pady=(0, 14), after=self.actions_frame)
+        self.setup_frame.pack(fill=tk.X, pady=(0, 14))
         self.root.after_idle(self.update_canvas_window_height)
 
     def update_summary_text(self, config: dict[str, object]) -> None:
@@ -1787,7 +2110,10 @@ class FreeCloudUi:
         entries = data.get("entries")
         if not isinstance(entries, list):
             return False
-        self.remote_manifest_cache = [entry for entry in entries if isinstance(entry, dict)]
+        self.remote_manifest_cache = [
+            entry for entry in entries
+            if isinstance(entry, dict) and not self.path_is_optimistically_deleted(str(entry.get("path") or ""))
+        ]
         devices = data.get("devices")
         if isinstance(devices, list):
             self.device_registry = [device for device in devices if isinstance(device, dict)]
@@ -1839,7 +2165,10 @@ class FreeCloudUi:
         self.device_registry = devices
         self.configure_device_columns()
         if entries:
-            self.remote_manifest_cache = entries
+            self.remote_manifest_cache = [
+                entry for entry in entries
+                if not self.path_is_optimistically_deleted(str(entry.get("path") or ""))
+            ]
             self.status.set("Cached")
             self.header_status_label.configure(fg=COLORS["muted"])
             self.update_storage_display(None)
@@ -1864,8 +2193,9 @@ class FreeCloudUi:
         )
 
     def placement_providers(self) -> list[dict[str, str]]:
-        providers = [{"key": "local", "label": "This Computer", "kind": "local", "device_id": ""}]
-        seen_ids = set()
+        desktop_device_id = str(cli.load_device_config().get("device_id") or "")
+        providers = [{"key": "local", "label": "This Computer", "kind": "local", "device_id": desktop_device_id}]
+        seen_ids = {desktop_device_id} if desktop_device_id else set()
         for device in sorted(self.device_registry, key=lambda item: str(item.get("name") or "").lower()):
             device_id = str(device.get("device_id") or "").strip()
             if not device_id or device_id in seen_ids:
@@ -1889,13 +2219,8 @@ class FreeCloudUi:
             return
         self.device_columns = providers
         self.device_columns_signature = signature
-        columns = ("name", "size", "type", *(item["key"] for item in providers), "modified")
-        self.files_tree.configure(columns=columns)
-        for item in providers:
-            key = item["key"]
-            self.files_tree.heading(key, text=item["label"], anchor="center")
-            self.files_tree.column(key, width=112, minwidth=88, stretch=False, anchor="center")
         self.render_devices_sidebar()
+        self.render_device_settings()
         self.last_rendered_folder_key = ""
 
     def device_is_online(self, device: dict[str, object]) -> bool:
@@ -1919,10 +2244,12 @@ class FreeCloudUi:
             anchor="w",
             font=("TkDefaultFont", 9, "bold"),
         ).pack(fill=tk.X, pady=(0, 5))
+        desktop_device_id = str(cli.load_device_config().get("device_id") or "")
         rows: list[tuple[str, bool]] = [("This Computer", True)]
         rows.extend(
             (str(device.get("name") or device.get("device_id") or "Device"), self.device_is_online(device))
             for device in sorted(self.device_registry, key=lambda item: str(item.get("name") or "").lower())
+            if str(device.get("device_id") or "") != desktop_device_id
         )
         rows.append(("Web Server", self.status.get() != "Offline"))
         for name, online in rows:
@@ -1959,13 +2286,180 @@ class FreeCloudUi:
             for location in locations
         )
 
+    @staticmethod
+    def entry_desired_on_provider(entry: dict[str, object], provider: dict[str, str]) -> bool:
+        device_id = provider.get("device_id", "")
+        if provider.get("kind") == "web_server":
+            device_id = "web_server"
+        if not device_id:
+            return False
+        locations = entry.get("desired_locations")
+        if not isinstance(locations, list):
+            return False
+        return any(
+            isinstance(location, dict) and str(location.get("device_id") or "") == device_id
+            for location in locations
+        )
+
+    @staticmethod
+    def entry_current_on_provider(entry: dict[str, object], provider: dict[str, str]) -> bool:
+        device_id = "web_server" if provider.get("kind") == "web_server" else provider.get("device_id", "")
+        stale = entry.get("stale_locations")
+        return not isinstance(stale, list) or device_id not in {str(value) for value in stale}
+
+    def placement_cell(self, entry: dict[str, object], provider: dict[str, str]) -> str:
+        actual = self.entry_on_provider(entry, provider)
+        desired = self.entry_desired_on_provider(entry, provider)
+        current = self.entry_current_on_provider(entry, provider)
+        if desired and actual and current:
+            return "☑"
+        if desired:
+            return "☑…"
+        if actual:
+            return "●"
+        return "□"
+
+    def effective_desired_on_provider(self, entry: dict[str, object], provider: dict[str, str]) -> bool:
+        path = cli.remote_path(str(entry.get("path") or ""))
+        device_id = "web_server" if provider.get("kind") == "web_server" else provider.get("device_id", "")
+        key = (path, device_id)
+        overrides = getattr(self, "desired_placement_overrides", {})
+        if key in overrides:
+            desired = overrides[key]
+            # Drop the optimistic value once a live server response confirms it.
+            if self.entry_desired_on_provider(entry, provider) == desired:
+                overrides.pop(key, None)
+            else:
+                return desired
+        return self.entry_desired_on_provider(entry, provider)
+
+    def placement_status(
+        self, entry: dict[str, object], provider: dict[str, str], desired: bool | None = None
+    ) -> str:
+        actual = self.entry_on_provider(entry, provider)
+        desired = self.effective_desired_on_provider(entry, provider) if desired is None else desired
+        current = self.entry_current_on_provider(entry, provider)
+        device_id = "web_server" if provider.get("kind") == "web_server" else provider.get("device_id", "")
+        key = (cli.remote_path(str(entry.get("path") or "")), device_id)
+        status_override = getattr(self, "placement_status_overrides", {}).get(key)
+        if status_override:
+            return status_override
+        conflicts = entry.get("reconciliation_conflict_locations")
+        failed = entry.get("reconciliation_failed_locations")
+        if desired and isinstance(conflicts, list) and device_id in {str(value) for value in conflicts}:
+            return "Conflict"
+        if desired and isinstance(failed, list) and device_id in {str(value) for value in failed}:
+            return "Error"
+        removing = device_id in {str(value) for value in entry.get("removing_locations", [])} if isinstance(entry.get("removing_locations"), list) else False
+        removal_blocked = device_id in {str(value) for value in entry.get("removal_blocked_locations", [])} if isinstance(entry.get("removal_blocked_locations"), list) else False
+        verifying = device_id in {str(value) for value in entry.get("removal_verifying_locations", [])} if isinstance(entry.get("removal_verifying_locations"), list) else False
+        waiting = device_id in {str(value) for value in entry.get("removal_waiting_locations", [])} if isinstance(entry.get("removal_waiting_locations"), list) else False
+        if removing and actual:
+            return "Removing..."
+        if verifying and actual:
+            return "Verifying..."
+        if waiting and actual:
+            return "Waiting for device..."
+        if removal_blocked and actual:
+            errors = entry.get("removal_blocked_errors", {})
+            error = str(errors.get(device_id, "")) if isinstance(errors, dict) else ""
+            if "no other verified copy" in error.lower():
+                return "Removal blocked — last verified copy"
+            if "child is still selected" in error.lower():
+                return "Removal blocked — selected child"
+            if "ambiguous" in error.lower() or "stale" in error.lower() or "conflict" in error.lower():
+                return "Removal blocked — conflicting/stale version"
+            return "Removal blocked"
+        if desired and actual and current:
+            return "Synced"
+        if desired:
+            return "Pending..."
+        if actual:
+            return "Removal blocked"
+        return "Not stored"
+
+    def render_device_settings(self) -> None:
+        container = getattr(self, "device_settings_body", None)
+        if container is None:
+            return
+        for child in container.winfo_children():
+            child.destroy()
+        entry = self.settings_entry_for_display()
+        selected_var = getattr(self, "sync_settings_selected_var", None)
+        if entry is None:
+            if selected_var is not None:
+                selected_var.set("Currently configuring: Current folder")
+            tk.Label(
+                container, text="Current folder placement is unavailable until its metadata loads.",
+                bg="#fbfdff", fg=COLORS["muted"], justify="left", wraplength=205,
+                font=("TkDefaultFont", 9),
+            ).pack(fill=tk.X, pady=(4, 0))
+            return
+        name = str(entry.get("name") or entry.get("path") or "Selected item")
+        if selected_var is not None:
+            selected_var.set(f"Currently configuring: {name}")
+        for provider in self.device_columns:
+            desired = self.effective_desired_on_provider(entry, provider)
+            status = self.placement_status(entry, provider, desired)
+            row = tk.Frame(container, bg="#fbfdff")
+            row.pack(fill=tk.X, pady=(4, 7))
+            row.grid_columnconfigure(0, weight=1)
+            tk.Label(
+                row, text=provider["label"], bg="#fbfdff", fg=COLORS["ink"],
+                anchor="w", font=("TkDefaultFont", 9),
+            ).grid(row=0, column=0, sticky="w")
+            toggle = PlacementToggle(
+                row, desired, lambda: None,
+            )
+            toggle.command = lambda item=entry, target=provider, switch=toggle: self.toggle_desired_placement(item, target, switch)
+            toggle.grid(row=0, column=1, sticky="e")
+            color = COLORS["success"] if status == "Synced" else COLORS["danger"] if status in {"Conflict", "Error"} else COLORS["accent_dark"] if status in {"Pending...", "Verifying...", "Waiting for device...", "Removing..."} else COLORS["muted"]
+            tk.Label(
+                row, text=status, bg="#fbfdff", fg=color, anchor="e",
+                font=("TkDefaultFont", 8),
+            ).grid(row=1, column=0, columnspan=2, sticky="e", pady=(2, 0))
+
+    def current_folder_entry_for_display(self) -> dict[str, object] | None:
+        path = cli.remote_path(self.current_remote_path)
+        if not path:
+            # Root-wide recursive placement is not exposed as a folder toggle.
+            return None
+        current = self.current_folder_placement
+        if isinstance(current, dict) and cli.remote_path(str(current.get("path") or "")) == path:
+            return current
+        for entry in self.remote_manifest_cache:
+            if cli.remote_path(str(entry.get("path") or "")) == path and str(entry.get("type") or "") == "dir":
+                return entry
+        return {
+            "path": path,
+            "name": path.rsplit("/", 1)[-1],
+            "type": "dir",
+            "locations": [],
+            "desired_locations": [],
+        }
+
+    def settings_entry_for_display(self) -> dict[str, object] | None:
+        return self.selected_remote_entry or self.current_folder_entry_for_display()
+
+    @staticmethod
+    def desired_toggle_request(
+        entry: dict[str, object], provider: dict[str, str]
+    ) -> tuple[str, str, bool, bool]:
+        path = cli.remote_path(str(entry.get("path") or ""))
+        device_id = "web_server" if provider.get("kind") == "web_server" else provider.get("device_id", "")
+        if not path or not device_id:
+            raise ValueError("This placement provider is not registered.")
+        desired = not FreeCloudUi.entry_desired_on_provider(entry, provider)
+        recursive = str(entry.get("type") or "") == "dir"
+        return path, device_id, desired, recursive
+
     def entries_for_folder(self, folder_path: str) -> list[dict[str, object]]:
         clean_folder = cli.remote_path(folder_path)
         prefix = f"{clean_folder}/" if clean_folder else ""
         entries: list[dict[str, object]] = []
         for entry in self.remote_manifest_cache:
             path = cli.remote_path(str(entry.get("path") or ""))
-            if not path:
+            if not path or self.path_is_optimistically_deleted(path):
                 continue
             if clean_folder:
                 if not path.startswith(prefix):
@@ -1977,6 +2471,91 @@ class FreeCloudUi:
                 entries.append(entry)
         return sorted(entries, key=lambda item: (str(item.get("type") or "") != "dir", str(item.get("name") or item.get("path") or "").lower()))
 
+    def local_entries_for_folder(self, folder_path: str) -> list[dict[str, object]]:
+        local_root = str(self.config_data().get("local_root") or "").strip()
+        if not local_root:
+            return []
+        clean_folder = cli.remote_path(folder_path)
+        directory = Path(local_root).expanduser() / clean_folder
+        if not directory.is_dir():
+            return []
+        entries: list[dict[str, object]] = []
+        desktop_device_id = str(cli.load_device_config().get("device_id") or "this_computer")
+        folder_entry = getattr(self, "current_folder_placement", None)
+        if not isinstance(folder_entry, dict) or cli.remote_path(str(folder_entry.get("path") or "")) != clean_folder:
+            folder_entry = next(
+                (
+                    entry for entry in getattr(self, "remote_manifest_cache", [])
+                    if cli.remote_path(str(entry.get("path") or "")) == clean_folder
+                    and str(entry.get("type") or "") == "dir"
+                ),
+                None,
+            )
+        inherited_desired = folder_entry.get("desired_locations") if isinstance(folder_entry, dict) else None
+        if isinstance(inherited_desired, list):
+            desired_locations = [dict(item) for item in inherited_desired if isinstance(item, dict)]
+        else:
+            # A local-only row has not reached the Catalog yet. Treat normal
+            # FreeCloud-folder content as newly shared by default so the UI
+            # does not render missing metadata as an explicit OFF choice.
+            desired_locations = []
+            for provider in getattr(self, "device_columns", []):
+                device_id = "web_server" if provider.get("kind") == "web_server" else provider.get("device_id", "")
+                if device_id:
+                    desired_locations.append({
+                        "device_id": device_id,
+                        "kind": provider.get("kind", "device"),
+                        "name": provider.get("label", device_id),
+                    })
+        try:
+            children = list(directory.iterdir())
+        except OSError:
+            return []
+        for child in children:
+            relative_path = "/".join(part for part in (clean_folder, child.name) if part)
+            if child.is_symlink() or cli.is_protected_path(relative_path) or self.path_is_optimistically_deleted(relative_path):
+                continue
+            try:
+                stat = child.stat()
+            except OSError:
+                continue
+            entries.append(
+                {
+                    "path": relative_path,
+                    "name": child.name,
+                    "type": "dir" if child.is_dir() else "file",
+                    "size": 0 if child.is_dir() else stat.st_size,
+                    "mtime": int(stat.st_mtime),
+                    "desired_locations": [dict(item) for item in desired_locations],
+                    "locations": [
+                        {
+                            "kind": "desktop",
+                            "device_id": desktop_device_id,
+                            "name": "This Computer",
+                            "available": True,
+                        }
+                    ],
+                }
+            )
+        return entries
+
+    def combined_entries_for_folder(self, folder_path: str) -> list[dict[str, object]]:
+        combined = {
+            cli.remote_path(str(entry.get("path") or "")): entry
+            for entry in self.entries_for_folder(folder_path)
+        }
+        for local_entry in self.local_entries_for_folder(folder_path):
+            path = cli.remote_path(str(local_entry.get("path") or ""))
+            if path and path not in combined:
+                combined[path] = local_entry
+        return sorted(
+            combined.values(),
+            key=lambda item: (
+                str(item.get("type") or "") != "dir",
+                str(item.get("name") or item.get("path") or "").lower(),
+            ),
+        )
+
     def render_remote_tree(self) -> None:
         tree = getattr(self, "remote_tree", None)
         if tree is None:
@@ -1985,7 +2564,7 @@ class FreeCloudUi:
         folder_paths: set[str] = set()
         for entry in self.remote_manifest_cache:
             path = cli.remote_path(str(entry.get("path") or ""))
-            if not path:
+            if not path or self.path_is_optimistically_deleted(path):
                 continue
             parts = path.split("/")
             limit = len(parts) if str(entry.get("type") or "") == "dir" else len(parts) - 1
@@ -2094,7 +2673,8 @@ class FreeCloudUi:
             self.navigate_remote_folder(path)
 
     def render_current_folder_from_cache(self) -> bool:
-        if not self.remote_manifest_cache:
+        entries = self.combined_entries_for_folder(self.current_remote_path)
+        if not self.remote_manifest_cache and not entries:
             self.render_remote_tree()
             return False
         started_at = time.perf_counter()
@@ -2103,7 +2683,7 @@ class FreeCloudUi:
         self.back_button.configure(state=tk.NORMAL if self.remote_back_stack else tk.DISABLED)
         self.forward_button.configure(state=tk.NORMAL if self.remote_forward_stack else tk.DISABLED)
         self.configure_device_columns()
-        self.render_remote_entries(self.entries_for_folder(self.current_remote_path))
+        self.render_remote_entries(entries)
         self.render_remote_tree()
         startup_log(
             f"cached folder rendered: /{self.current_remote_path}, "
@@ -2195,6 +2775,8 @@ class FreeCloudUi:
         )
 
     def refresh_files(self, force_live: bool = False) -> None:
+        if force_live:
+            self.desktop_manifest_last_published_at = 0.0
         loaded_from_cache = self.render_current_folder_from_cache()
         if not loaded_from_cache and self.load_remote_tree_cache():
             loaded_from_cache = self.render_current_folder_from_cache()
@@ -2217,18 +2799,66 @@ class FreeCloudUi:
         self.render_devices_sidebar()
         self.remote_manifest_refresh_started_at = time.perf_counter()
         folder_path = self.current_remote_path
-        had_cached_entries = bool(self.entries_for_folder(folder_path))
         startup_log(f"live folder refresh started: /{folder_path}")
 
         def worker() -> None:
+            manifest_current: bool | None = False
+            reconciliation: dict[str, int] = {"installed": 0, "uploaded": 0, "conflicts": 0, "failed": 0, "jobs": 0}
             try:
                 client = self.current_client()
+                config = self.config_data()
+                local_root = Path(str(config.get("local_root") or "")).expanduser()
+                manifest_current = None if local_root.is_dir() else False
+                if local_root.is_dir() and self.reconciliation_lock.acquire(blocking=False):
+                    try:
+                        device_id = str(cli.load_device_config().get("device_id") or "")
+                        if time.monotonic() - self.desktop_manifest_last_published_at >= 30:
+                            try:
+                                device, _count, signature = cli.publish_desktop_manifest_snapshot(client, local_root)
+                                device_id = str(device.get("device_id") or device_id)
+                                self.desktop_manifest_signature = signature
+                                self.desktop_manifest_last_published_at = time.monotonic()
+                                self.desktop_manifest_last_scan_at = self.desktop_manifest_last_published_at
+                                manifest_current = True
+                            except Exception as manifest_error:
+                                manifest_current = False
+                                startup_log(f"desktop manifest not published; scan/publication incomplete: {manifest_error}")
+                        else:
+                            manifest_current = (
+                                True if time.monotonic() - self.desktop_manifest_last_scan_at
+                                <= self.LOCAL_MANIFEST_SCAN_INTERVAL_MS / 1000 * 1.5
+                                else None
+                            )
+                        if device_id and manifest_current:
+                            # Adopt legacy actual copies only after the Desktop's
+                            # complete snapshot has reconciled its own locations.
+                            client.adopt_existing_locations()
+                            reconciliation = cli.process_desktop_reconciliation(client, device_id, local_root)
+                            if reconciliation["installed"]:
+                                _device, _count, signature = cli.publish_desktop_manifest_snapshot(client, local_root)
+                                self.desktop_manifest_signature = signature
+                                self.desktop_manifest_last_published_at = time.monotonic()
+                                self.desktop_manifest_last_scan_at = self.desktop_manifest_last_published_at
+                    finally:
+                        self.reconciliation_lock.release()
                 try:
                     entries = client.metadata_list(folder_path)
                 except cli.FreeCloudApiError as exc:
                     if exc.code != 400:
                         raise
                     entries = client.list(folder_path)
+                folder_placement: dict[str, object] | None = None
+                if folder_path:
+                    placement = client.get_placement(folder_path)
+                    raw_entry = placement.get("entry")
+                    folder_placement = dict(raw_entry) if isinstance(raw_entry, dict) else {
+                        "path": folder_path,
+                        "name": folder_path.rsplit("/", 1)[-1],
+                        "type": "dir",
+                    }
+                    folder_placement["actual_locations"] = placement.get("actual_locations", [])
+                    folder_placement["locations"] = placement.get("actual_locations", [])
+                    folder_placement["desired_locations"] = placement.get("desired_locations", [])
                 try:
                     device_response = client.request("list_devices")
                     raw_devices = device_response.get("devices", []) if isinstance(device_response, dict) else []
@@ -2236,11 +2866,311 @@ class FreeCloudUi:
                 except Exception:
                     devices = self.device_registry
             except Exception as exc:
-                self.root.after(0, lambda: self.finish_folder_refresh_error(exc, show_errors))
+                self.root.after(
+                    0,
+                    lambda error=exc, failed_path=folder_path: self.finish_folder_refresh_error(
+                        error,
+                        show_errors,
+                        failed_path,
+                    ),
+                )
                 return
-            self.root.after(0, lambda: self.finish_folder_refresh(folder_path, entries, devices, had_cached_entries, show_errors))
+            sync_state = self.folder_sync_state(entries, manifest_current, reconciliation)
+            self.root.after(0, lambda: self.finish_folder_refresh(
+                folder_path, entries, devices, show_errors, folder_placement, sync_state
+            ))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def schedule_reconciliation_poll(self, delay_ms: int | None = None) -> None:
+        if self.reconciliation_stop.is_set() or self.reconciliation_poll_after_id is not None:
+            return
+        delay = self.RECONCILIATION_POLL_INTERVAL_MS if delay_ms is None else max(0, delay_ms)
+        self.reconciliation_poll_after_id = self.root.after(delay, self.run_reconciliation_poll)
+
+    @staticmethod
+    def folder_sync_state(
+        entries: list[dict[str, object]], manifest_ok: bool | None, counts: dict[str, int]
+    ) -> str:
+        if manifest_ok is False or counts.get("failed", 0):
+            return "Sync error"
+        if manifest_ok is None:
+            return "Syncing…"
+        if counts.get("conflicts", 0):
+            return "Conflict"
+        pending_removal = False
+        pending_copy = False
+        for entry in entries:
+            if entry.get("removing_locations") or entry.get("removal_verifying_locations") or entry.get("removal_waiting_locations"):
+                pending_removal = True
+            if entry.get("removal_blocked_locations"):
+                return "Blocked"
+            if entry.get("reconciliation_conflict_locations"):
+                return "Conflict"
+            if entry.get("reconciliation_failed_locations"):
+                return "Sync error"
+            desired = {
+                str(item.get("device_id") or "")
+                for item in entry.get("desired_locations", [])
+                if isinstance(item, dict)
+            } if isinstance(entry.get("desired_locations"), list) else set()
+            actual = {
+                str(item.get("device_id") or "")
+                for item in entry.get("locations", [])
+                if isinstance(item, dict)
+            } if isinstance(entry.get("locations"), list) else set()
+            stale = {str(value) for value in entry.get("stale_locations", [])} if isinstance(entry.get("stale_locations"), list) else set()
+            if desired - actual or desired & stale:
+                pending_copy = True
+        handled = counts.get("installed", 0) + counts.get("uploaded", 0) + counts.get("failed", 0) + counts.get("conflicts", 0)
+        if counts.get("jobs", 0) > handled:
+            pending_copy = True
+        if pending_removal:
+            return "Removing..."
+        return "Syncing…" if pending_copy else "Synced"
+
+    def schedule_local_manifest_scan(self, delay_ms: int | None = None) -> None:
+        if self.reconciliation_stop.is_set() or self.local_manifest_scan_after_id is not None:
+            return
+        delay = self.LOCAL_MANIFEST_SCAN_INTERVAL_MS if delay_ms is None else max(0, delay_ms)
+        self.local_manifest_scan_after_id = self.root.after(delay, self.run_local_manifest_scan)
+
+    def local_manifest_snapshot_is_stable(self, signature: str) -> bool:
+        """Require two identical stat-only snapshots before publishing a change."""
+        if signature == self.desktop_manifest_signature:
+            self.local_manifest_candidate_signature = None
+            return False
+        if signature != self.local_manifest_candidate_signature:
+            self.local_manifest_candidate_signature = signature
+            return False
+        return True
+
+    def run_local_manifest_scan(self) -> None:
+        self.local_manifest_scan_after_id = None
+        if self.reconciliation_stop.is_set():
+            return
+        if self.local_manifest_scan_in_flight or not self.reconciliation_lock.acquire(blocking=False):
+            self.schedule_local_manifest_scan(self.RECONCILIATION_RETRY_INTERVAL_MS)
+            return
+        config = self.config_data()
+        local_root = Path(str(config.get("local_root") or "")).expanduser()
+        if not config or not local_root.is_dir():
+            self.reconciliation_lock.release()
+            self.schedule_local_manifest_scan()
+            return
+
+        self.local_manifest_scan_in_flight = True
+
+        def worker() -> None:
+            outcome = "unchanged"
+            error: Exception | None = None
+            try:
+                entries = cli.desktop_manifest(local_root)
+                signature = cli.desktop_manifest_signature(entries)
+                if not self.local_manifest_snapshot_is_stable(signature):
+                    if signature == self.desktop_manifest_signature:
+                        self.desktop_manifest_last_scan_at = time.monotonic()
+                        if self.desktop_reconciliation_plan_pending:
+                            client = self.current_client()
+                            device_id = str(cli.load_device_config().get("device_id") or "")
+                            if not device_id:
+                                raise RuntimeError("Desktop device identity is unavailable for reconciliation.")
+                            counts = cli.process_desktop_reconciliation(client, device_id, local_root)
+                            if counts.get("installed", 0):
+                                _device, _count, signature = cli.publish_desktop_manifest_snapshot(client, local_root)
+                                self.desktop_manifest_signature = signature
+                                self.desktop_manifest_last_published_at = time.monotonic()
+                            self.desktop_reconciliation_plan_pending = False
+                            if counts.get("failed", 0) or counts.get("conflicts", 0):
+                                outcome = "error"
+                                error = RuntimeError(
+                                    f"Reconciliation needs attention ({counts.get('failed', 0)} failed, "
+                                    f"{counts.get('conflicts', 0)} conflicts)."
+                                )
+                            else:
+                                outcome = "published" if counts.get("installed", 0) else "reconciled"
+                        else:
+                            outcome = "unchanged"
+                    else:
+                        outcome = "debounce"
+                else:
+                    client = self.current_client()
+                    device, _count, signature = cli.publish_desktop_manifest_entries(client, entries)
+                    device_id = str(device.get("device_id") or cli.load_device_config().get("device_id") or "")
+                    self.desktop_manifest_signature = signature
+                    self.local_manifest_candidate_signature = None
+                    self.desktop_manifest_last_published_at = time.monotonic()
+                    self.desktop_manifest_last_scan_at = self.desktop_manifest_last_published_at
+                    self.desktop_reconciliation_plan_pending = True
+                    counts = cli.process_desktop_reconciliation(client, device_id, local_root)
+                    self.desktop_reconciliation_plan_pending = False
+                    if counts.get("installed", 0):
+                        _device, _count, signature = cli.publish_desktop_manifest_snapshot(client, local_root)
+                        self.desktop_manifest_signature = signature
+                        self.desktop_manifest_last_published_at = time.monotonic()
+                    if counts.get("failed", 0) or counts.get("conflicts", 0):
+                        outcome = "error"
+                        error = RuntimeError(
+                            f"Reconciliation needs attention ({counts.get('failed', 0)} failed, "
+                            f"{counts.get('conflicts', 0)} conflicts)."
+                        )
+                    else:
+                        outcome = "published"
+            except Exception as exc:
+                error = exc
+                outcome = "error"
+            finally:
+                self.reconciliation_lock.release()
+                self.local_manifest_scan_in_flight = False
+
+            if self.reconciliation_stop.is_set():
+                return
+            try:
+                self.root.after(0, lambda: self.finish_local_manifest_scan(outcome, error))
+            except (tk.TclError, RuntimeError):
+                return
+
+        threading.Thread(target=worker, daemon=True, name="freecloud-manifest-scan").start()
+
+    def finish_local_manifest_scan(self, outcome: str, error: Exception | None) -> None:
+        if self.reconciliation_stop.is_set():
+            return
+        if outcome == "debounce":
+            self.status.set("Syncing…")
+            self.header_status_label.configure(fg=COLORS["accent_dark"])
+            self.schedule_local_manifest_scan(self.LOCAL_MANIFEST_DEBOUNCE_MS)
+        elif outcome in {"published", "reconciled"}:
+            if outcome == "published":
+                startup_log("local filesystem changes published; reconciliation processed")
+            self.last_rendered_folder_key = ""
+            self.refresh_after_local_manifest()
+            self.schedule_local_manifest_scan()
+        elif outcome == "error":
+            self.append(f"Automatic sync needs attention: {error}\n")
+            self.status.set("Sync error")
+            self.header_status_label.configure(fg=COLORS["danger"])
+            self.schedule_local_manifest_scan()
+        else:
+            self.schedule_local_manifest_scan()
+
+    def refresh_after_local_manifest(self) -> None:
+        if self.reconciliation_stop.is_set():
+            return
+        if self.remote_manifest_refreshing:
+            try:
+                self.root.after(500, self.refresh_after_local_manifest)
+            except (tk.TclError, RuntimeError):
+                pass
+            return
+        self.refresh_current_folder_in_background(show_errors=False)
+
+    def run_reconciliation_poll(self) -> None:
+        self.reconciliation_poll_after_id = None
+        if self.reconciliation_stop.is_set():
+            return
+        if self.reconciliation_poll_in_flight:
+            self.schedule_reconciliation_poll(self.RECONCILIATION_RETRY_INTERVAL_MS)
+            return
+        config = self.config_data()
+        local_root = Path(str(config.get("local_root") or "")).expanduser()
+        device_id = str(cli.load_device_config().get("device_id") or "")
+        if not config or not local_root.is_dir() or not device_id:
+            self.schedule_reconciliation_poll()
+            return
+        if not self.reconciliation_lock.acquire(blocking=False):
+            self.schedule_reconciliation_poll(self.RECONCILIATION_RETRY_INTERVAL_MS)
+            return
+
+        self.reconciliation_poll_in_flight = True
+        folder_path = self.current_remote_path
+
+        def worker() -> None:
+            counts: dict[str, int] = {"installed": 0, "uploaded": 0, "conflicts": 0, "failed": 0, "jobs": 0}
+            entries: list[dict[str, object]] | None = None
+            folder_placement: dict[str, object] | None = None
+            error: Exception | None = None
+            try:
+                client = self.current_client()
+                if self.desktop_manifest_dirty:
+                    cli.publish_desktop_manifest(client, local_root)
+                    self.desktop_manifest_dirty = False
+                counts = cli.process_desktop_reconciliation(client, device_id, local_root, check_only=True)
+                if counts.get("installed", 0):
+                    # Publish only after a job changed local bytes; idle polls
+                    # never scan the local tree or publish a manifest.
+                    self.desktop_manifest_dirty = True
+                    cli.publish_desktop_manifest(client, local_root)
+                    self.desktop_manifest_dirty = False
+                    self.desktop_manifest_last_published_at = time.monotonic()
+                if counts.get("jobs", 0):
+                    try:
+                        entries = client.metadata_list(folder_path)
+                    except cli.FreeCloudApiError as exc:
+                        if exc.code != 400:
+                            raise
+                        entries = client.list(folder_path)
+                    if folder_path:
+                        placement = client.get_placement(folder_path)
+                        raw_entry = placement.get("entry")
+                        folder_placement = dict(raw_entry) if isinstance(raw_entry, dict) else {
+                            "path": folder_path,
+                            "name": folder_path.rsplit("/", 1)[-1],
+                            "type": "dir",
+                        }
+                        folder_placement["actual_locations"] = placement.get("actual_locations", [])
+                        folder_placement["locations"] = placement.get("actual_locations", [])
+                        folder_placement["desired_locations"] = placement.get("desired_locations", [])
+            except Exception as exc:
+                error = exc
+            finally:
+                self.reconciliation_lock.release()
+            if self.reconciliation_stop.is_set():
+                return
+            try:
+                self.root.after(
+                    0,
+                    lambda: self.finish_reconciliation_poll(
+                        folder_path, counts, entries, folder_placement, error
+                    ),
+                )
+            except (tk.TclError, RuntimeError):
+                pass
+
+        threading.Thread(target=worker, daemon=True, name="freecloud-reconciliation").start()
+
+    def finish_reconciliation_poll(
+        self,
+        folder_path: str,
+        counts: dict[str, int],
+        entries: list[dict[str, object]] | None,
+        folder_placement: dict[str, object] | None,
+        error: Exception | None,
+    ) -> None:
+        self.reconciliation_poll_in_flight = False
+        if self.reconciliation_stop.is_set():
+            return
+        if error is not None:
+            self.append(f"Reconciliation check failed: {error}\n")
+        elif entries is not None and cli.remote_path(folder_path) == self.current_remote_path:
+            self.confirm_global_deletions_from_refresh(folder_path, entries)
+            self.replace_cached_folder_entries(folder_path, entries)
+            if folder_path:
+                self.current_folder_placement = folder_placement
+            if self.selected_remote_entry is not None:
+                selected_path = cli.remote_path(str(self.selected_remote_entry.get("path") or ""))
+                updated = next(
+                    (item for item in entries if cli.remote_path(str(item.get("path") or "")) == selected_path),
+                    None,
+                )
+                if updated is not None:
+                    self.selected_remote_entry = updated
+            self.render_current_folder_from_cache()
+            self.render_device_settings()
+            threading.Thread(target=self.save_remote_tree_cache, daemon=True).start()
+        if counts.get("jobs", 0) and not counts.get("conflicts", 0) and not counts.get("failed", 0):
+            self.schedule_reconciliation_poll(self.RECONCILIATION_RETRY_INTERVAL_MS)
+        else:
+            self.schedule_reconciliation_poll()
 
     def replace_cached_folder_entries(self, folder_path: str, entries: list[dict[str, object]]) -> None:
         clean_folder = cli.remote_path(folder_path)
@@ -2258,7 +3188,26 @@ class FreeCloudUi:
                 remainder = path
             return remainder != "" and "/" not in remainder
 
-        kept = [entry for entry in self.remote_manifest_cache if not is_direct_child(entry)]
+        old_children = {
+            cli.remote_path(str(entry.get("path") or ""))
+            for entry in self.remote_manifest_cache
+            if is_direct_child(entry)
+        }
+        new_children = {
+            cli.remote_path(str(entry.get("path") or ""))
+            for entry in entries
+            if is_direct_child(entry)
+        }
+        removed_subtrees = old_children - new_children
+
+        def belongs_to_removed_subtree(entry: dict[str, object]) -> bool:
+            path = cli.remote_path(str(entry.get("path") or ""))
+            return any(path == child or path.startswith(child + "/") for child in removed_subtrees)
+
+        kept = [
+            entry for entry in self.remote_manifest_cache
+            if not is_direct_child(entry) and not belongs_to_removed_subtree(entry)
+        ]
         seen = {cli.remote_path(str(entry.get("path") or "")) for entry in kept}
         for entry in entries:
             path = cli.remote_path(str(entry.get("path") or ""))
@@ -2272,19 +3221,14 @@ class FreeCloudUi:
         folder_path: str,
         entries: list[dict[str, object]],
         devices: list[dict[str, object]],
-        had_cached_entries: bool = False,
         show_errors: bool = False,
+        folder_placement: dict[str, object] | None = None,
+        sync_state: str = "Syncing…",
     ) -> None:
         self.remote_manifest_refreshing = False
-        if had_cached_entries and not entries and not show_errors:
-            elapsed = time.perf_counter() - self.remote_manifest_refresh_started_at if self.remote_manifest_refresh_started_at else 0
-            startup_log(f"ignored empty background folder refresh, path=/{folder_path}, elapsed={elapsed:.3f}s")
-            self.device_registry = devices
-            self.configure_device_columns()
-            self.status.set("Up to date")
-            self.header_status_label.configure(fg=COLORS["success"])
-            self.render_devices_sidebar()
-            return
+        if cli.remote_path(folder_path) == self.current_remote_path:
+            self.current_folder_placement = folder_placement
+            self.render_device_settings()
         self.device_registry = devices
         self.configure_device_columns()
         self.replace_cached_folder_entries(folder_path, entries)
@@ -2292,14 +3236,20 @@ class FreeCloudUi:
             self.render_current_folder_from_cache()
         elapsed = time.perf_counter() - self.remote_manifest_refresh_started_at if self.remote_manifest_refresh_started_at else 0
         self.append(f"Updated current folder in {elapsed:.2f}s.\n")
-        self.status.set("Up to date")
-        self.header_status_label.configure(fg=COLORS["success"])
+        self.status.set(sync_state)
+        self.header_status_label.configure(
+            fg=COLORS["danger"] if sync_state in {"Sync error", "Conflict", "Blocked"}
+            else COLORS["accent_dark"] if sync_state in {"Syncing…", "Removing..."}
+            else COLORS["success"]
+        )
         self.render_devices_sidebar()
         startup_log(f"live folder refresh finished, path=/{folder_path}, entries={len(entries)}, elapsed={elapsed:.3f}s")
         threading.Thread(target=self.save_remote_tree_cache, daemon=True).start()
         self.schedule_storage_refresh()
+        if cli.remote_path(folder_path) != self.current_remote_path:
+            self.schedule_folder_refresh()
 
-    def finish_folder_refresh_error(self, exc: Exception, show_error: bool) -> None:
+    def finish_folder_refresh_error(self, exc: Exception, show_error: bool, folder_path: str = "") -> None:
         self.remote_manifest_refreshing = False
         self.status.set("Offline")
         self.header_status_label.configure(fg="#7f8b96")
@@ -2309,6 +3259,8 @@ class FreeCloudUi:
             messagebox.showerror("FreeCloud Files", str(exc))
         else:
             self.append(f"Could not refresh cloud file list: {exc}\n")
+        if cli.remote_path(folder_path) != self.current_remote_path:
+            self.schedule_folder_refresh(1000)
 
     def schedule_storage_refresh(self, minimum_interval: int = 300) -> None:
         if self.storage_refreshing:
@@ -2383,7 +3335,7 @@ class FreeCloudUi:
                         str(entry.get("type") or ""),
                         str(entry.get("size") or ""),
                         str(entry.get("mtime") or ""),
-                        *("1" if self.entry_on_provider(entry, provider) else "0" for provider in self.device_columns),
+                        *(self.placement_cell(entry, provider) for provider in self.device_columns),
                     )
                 )
             )
@@ -2392,25 +3344,31 @@ class FreeCloudUi:
             return
         self.last_rendered_folder_key = folder_key
 
+        selected_path = cli.remote_path(str((self.selected_remote_entry or {}).get("path") or ""))
         existing_items = self.files_tree.get_children("")
         if existing_items:
             self.files_tree.delete(*existing_items)
         self.file_tree_entries = {}
+        self.selected_remote_entry = None
         self.selection_detail_var.set("")
+        self.render_device_settings()
 
         if not entries:
             self.files_empty_var.set("This cloud folder is empty.")
             self.files_tree.insert(
                 "",
                 "end",
-                values=("This cloud folder is empty.", "", "", *("" for _ in self.device_columns), ""),
+                values=("This cloud folder is empty.", "", "", ""),
             )
             self.files_footer_var.set("0 items")
             return
 
         folder_count = sum(1 for entry in entries if str(entry.get("type") or "") == "dir")
         file_count = len(entries) - folder_count
-        self.files_footer_var.set(f"{len(entries)} items,  {folder_count} folders, {file_count} files")
+        self.files_footer_var.set(
+            f"{len(entries)} items, {folder_count} folders, {file_count} files"
+            "   |   Synced  |  Pending...  |  Removing...  |  Not stored"
+        )
         for entry in entries:
             is_dir = str(entry.get("type") or "") == "dir"
             name = str(entry.get("name") or entry.get("path") or "")
@@ -2421,17 +3379,31 @@ class FreeCloudUi:
                     f"{self.file_kind_badge(name, is_dir)}  {name}",
                     "—" if is_dir else self.format_bytes(int(entry.get("size") or 0)),
                     "Folder" if is_dir else self.file_type_label(name),
-                    *("☑" if self.entry_on_provider(entry, provider) else "□" for provider in self.device_columns),
                     self.format_mtime(entry.get("mtime")),
                 ),
             )
             self.file_tree_entries[item_id] = entry
+            if selected_path and cli.remote_path(str(entry.get("path") or "")) == selected_path:
+                self.files_tree.selection_set(item_id)
+                self.selected_remote_entry = entry
+        self.update_selected_file_details()
 
-    def on_file_tree_button_press(self, event: tk.Event[tk.Misc]) -> None:
-        if self.files_tree.identify_region(event.x, event.y) != "cell":
+    def on_file_tree_button_press(self, event: tk.Event[tk.Misc]) -> str | None:
+        region = self.files_tree.identify_region(event.x, event.y)
+        if region != "cell":
+            if region == "nothing":
+                selected = self.files_tree.selection()
+                if selected:
+                    self.files_tree.selection_remove(*selected)
             self.clear_remote_drag()
             return
         item_id = self.files_tree.identify_row(event.y)
+        if not item_id:
+            selected = self.files_tree.selection()
+            if selected:
+                self.files_tree.selection_remove(*selected)
+            self.clear_remote_drag()
+            return
         entry = self.file_tree_entries.get(item_id)
         if entry is None:
             return
@@ -2440,16 +3412,124 @@ class FreeCloudUi:
         self.drag_start_xy = (event.x_root, event.y_root)
         self.drag_active = False
         self.drag_source_widget = self.files_tree
+        return None
+
+    def toggle_desired_placement(
+        self, entry: dict[str, object], provider: dict[str, str], toggle: PlacementToggle | None = None
+    ) -> None:
+        try:
+            path, device_id, desired, recursive = self.desired_toggle_request(entry, provider)
+        except ValueError as exc:
+            messagebox.showerror("FreeCloud Placement", str(exc))
+            return
+        key = (path, device_id)
+        if key in self.placement_updates:
+            return
+        self.placement_updates.add(key)
+        self.desired_placement_overrides[key] = desired
+        if toggle is not None:
+            toggle.selected = desired
+            toggle.redraw()
+        immediate_status = "Verifying..." if not desired and self.entry_on_provider(entry, provider) else None
+        if immediate_status:
+            self.placement_status_overrides[key] = immediate_status
+        else:
+            self.placement_status_overrides.pop(key, None)
+        self.render_device_settings()
+        self.status.set("Updating placement…")
+        self.header_status_label.configure(fg=COLORS["accent_dark"])
+
+        def worker() -> None:
+            try:
+                self.current_client().set_desired_location(path, device_id, desired, recursive)
+            except cli.FreeCloudApiError as exc:
+                if exc.code == 410:
+                    if desired:
+                        self.root.after(0, lambda: self.confirm_tombstone_recreation(
+                            key, path, device_id, recursive
+                        ))
+                    else:
+                        friendly = RuntimeError(
+                            "This path was globally deleted. To use it again, turn storage ON "
+                            "and confirm recreating it as a new item."
+                        )
+                        self.root.after(0, lambda error=friendly: self.finish_desired_placement_update(key, error))
+                    return
+                self.root.after(0, lambda error=exc: self.finish_desired_placement_update(key, error))
+                return
+            except Exception as exc:
+                self.root.after(0, lambda error=exc: self.finish_desired_placement_update(key, error))
+                return
+            self.root.after(0, lambda: self.finish_desired_placement_update(key, None))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def confirm_tombstone_recreation(
+        self, key: tuple[str, str], path: str, device_id: str, recursive: bool
+    ) -> None:
+        recreate = messagebox.askyesno(
+            "Recreate Deleted Item?",
+            f"{path} was globally deleted before. Recreate it as a new item generation "
+            "from the current files on This Computer? Old offline copies will remain blocked.",
+        )
+        if not recreate:
+            self.desired_placement_overrides.pop(key, None)
+            self.placement_status_overrides.pop(key, None)
+            self.placement_updates.discard(key)
+            self.render_device_settings()
+            self.status.set("Recreation cancelled")
+            return
+
+        local_root = str(self.config_data().get("local_root") or "").strip()
+        if not local_root:
+            self.finish_desired_placement_update(key, RuntimeError("The local FreeCloud folder is not configured."))
+            return
+
+        def worker() -> None:
+            try:
+                client = self.current_client()
+                source, _count = cli.publish_desktop_manifest(client, Path(local_root).expanduser())
+                client.recreate_path(path, str(source["device_id"]), device_id, recursive)
+            except Exception as exc:
+                self.root.after(0, lambda error=exc: self.finish_desired_placement_update(key, error))
+                return
+            self.root.after(0, lambda: self.finish_desired_placement_update(key, None))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def finish_desired_placement_update(
+        self, key: tuple[str, str], error: Exception | None
+    ) -> None:
+        self.placement_updates.discard(key)
+        if error is not None:
+            self.desired_placement_overrides.pop(key, None)
+            self.placement_status_overrides.pop(key, None)
+            self.render_device_settings()
+            self.status.set("Placement update failed")
+            self.header_status_label.configure(fg=COLORS["danger"])
+            messagebox.showerror("FreeCloud Placement", str(error))
+            return
+        self.placement_status_overrides.pop(key, None)
+        self.last_rendered_folder_key = ""
+        self.refresh_current_folder_in_background(show_errors=True)
 
     def update_selected_file_details(self, _event: tk.Event[tk.Misc] | None = None) -> None:
         selected = self.files_tree.selection()
         entry = self.file_tree_entries.get(selected[0]) if selected else None
         if entry is None:
+            self.selected_remote_entry = None
             self.selection_detail_var.set("")
+            self.render_device_settings()
             return
-        placements = [provider["label"] for provider in self.device_columns if self.entry_on_provider(entry, provider)]
+        self.selected_remote_entry = entry
+        actual = [provider["label"] for provider in self.device_columns if self.entry_on_provider(entry, provider)]
+        desired = [provider["label"] for provider in self.device_columns if self.entry_desired_on_provider(entry, provider)]
         name = str(entry.get("name") or entry.get("path") or "")
-        self.selection_detail_var.set(f"{name}  ·  {', '.join(placements) if placements else 'No available copy'}")
+        self.selection_detail_var.set(
+            f"{name}  ·  Desired: {', '.join(desired) if desired else 'none'}"
+            f"  ·  Actual: {', '.join(actual) if actual else 'none'}"
+        )
+        self.render_device_settings()
 
     def on_file_tree_drag_motion(self, event: tk.Event[tk.Misc]) -> None:
         self.on_remote_drag_motion(event)
@@ -2630,7 +3710,8 @@ class FreeCloudUi:
         entry = self.file_tree_entries.get(item_id)
         if entry is None:
             return
-        self.files_tree.selection_set(item_id)
+        if item_id not in self.files_tree.selection():
+            self.files_tree.selection_set(item_id)
         path = str(entry.get("path") or "")
         name = str(entry.get("name") or path)
         self.show_remote_item_menu(path, name, str(entry.get("type") or "") == "dir")
@@ -2643,10 +3724,12 @@ class FreeCloudUi:
         if remember_history and clean_path != self.current_remote_path:
             self.remote_back_stack.append(self.current_remote_path)
             self.remote_forward_stack.clear()
+        if clean_path != self.current_remote_path:
+            self.current_folder_placement = None
         self.current_remote_path = clean_path
         self.last_rendered_folder_key = ""
-        if not self.render_current_folder_from_cache():
-            self.refresh_files(force_live=True)
+        self.render_current_folder_from_cache()
+        self.refresh_current_folder_in_background(show_errors=False)
 
     def go_up_remote_folder(self) -> None:
         if not self.current_remote_path:
@@ -2659,18 +3742,20 @@ class FreeCloudUi:
             return
         self.remote_forward_stack.append(self.current_remote_path)
         self.current_remote_path = self.remote_back_stack.pop()
+        self.current_folder_placement = None
         self.last_rendered_folder_key = ""
-        if not self.render_current_folder_from_cache():
-            self.refresh_files(force_live=True)
+        self.render_current_folder_from_cache()
+        self.refresh_current_folder_in_background(show_errors=False)
 
     def go_forward_remote_folder(self) -> None:
         if not self.remote_forward_stack:
             return
         self.remote_back_stack.append(self.current_remote_path)
         self.current_remote_path = self.remote_forward_stack.pop()
+        self.current_folder_placement = None
         self.last_rendered_folder_key = ""
-        if not self.render_current_folder_from_cache():
-            self.refresh_files(force_live=True)
+        self.render_current_folder_from_cache()
+        self.refresh_current_folder_in_background(show_errors=False)
 
     def go_to_path_from_entry(self, _event: tk.Event[tk.Misc]) -> None:
         self.navigate_remote_folder(self.remote_path_var.get())
@@ -2716,11 +3801,11 @@ class FreeCloudUi:
 
     def show_files_menu(self) -> None:
         menu = tk.Menu(self.root, tearoff=False)
-        menu.add_command(label="Refresh", command=lambda: self.refresh_files(force_live=True))
-        menu.add_command(label="Upload Files", command=self.upload_remote_files)
-        menu.add_command(label="New Folder", command=self.create_remote_folder)
+        menu.add_command(label="Refresh", image=self.icons.action("refresh", 18), compound=tk.LEFT, command=lambda: self.refresh_files(force_live=True))
+        menu.add_command(label="Upload Files", image=self.icons.action("upload", 18), compound=tk.LEFT, command=self.upload_remote_files)
+        menu.add_command(label="New Folder", image=self.icons.action("new_folder", 18), compound=tk.LEFT, command=self.create_remote_folder)
         menu.add_separator()
-        menu.add_command(label="Open Local Folder", command=self.open_local_folder)
+        menu.add_command(label="Open Local Folder", image=self.icons.action("open_local_folder", 18), compound=tk.LEFT, command=self.open_local_folder)
         menu.tk_popup(self.root.winfo_pointerx(), self.root.winfo_pointery())
 
     def show_about(self) -> None:
@@ -2742,12 +3827,100 @@ class FreeCloudUi:
     def delete_remote_item(self, path: str, name: str) -> None:
         if not messagebox.askyesno("Delete Cloud Item", f"Delete {name} from the cloud drive?"):
             return
-        try:
-            self.current_client().delete(path)
-            self.append(f"Deleted remote item: {path}\n")
+        clean_path = cli.remote_path(path)
+        if not clean_path:
+            messagebox.showerror("FreeCloud Files", "The root folder cannot be deleted.")
+            return
+        entry = self.remote_entry_for_path(clean_path) or {}
+        recursive = str(entry.get("type") or "").lower() in {"dir", "folder", "directory"}
+        if not entry:
+            local_root = Path(str(self.config_data().get("local_root") or "")).expanduser()
+            recursive = (local_root / clean_path).is_dir()
+
+        # Hide the logical item synchronously; the server tombstone then keeps
+        # it hidden across refresh/restart while devices process physical work.
+        self.add_optimistic_global_deletion(clean_path, recursive)
+        self.status.set("Deleting…")
+        self.render_current_folder_from_cache()
+        self.render_device_settings()
+        threading.Thread(target=self.save_remote_tree_cache, daemon=True).start()
+
+        def worker() -> None:
+            error: Exception | None = None
+            try:
+                self.current_client().global_delete(clean_path, recursive=recursive)
+            except Exception as exc:
+                error = exc
+            try:
+                self.root.after(0, lambda: self.finish_global_delete(clean_path, error))
+            except (tk.TclError, RuntimeError):
+                pass
+
+        threading.Thread(target=worker, daemon=True, name="freecloud-global-delete").start()
+
+    @staticmethod
+    def global_delete_covers(path: str, deletions: dict[str, bool]) -> bool:
+        clean_path = cli.remote_path(path)
+        for scope, recursive in deletions.items():
+            clean_scope = cli.remote_path(scope)
+            if clean_path == clean_scope or (recursive and clean_path.startswith(clean_scope + "/")):
+                return True
+        return False
+
+    def load_global_delete_overlay(self) -> dict[str, bool]:
+        raw = load_json(GLOBAL_DELETE_OVERLAY_PATH).get("paths", {})
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            cli.remote_path(str(path)): bool(recursive)
+            for path, recursive in raw.items()
+            if cli.remote_path(str(path))
+        }
+
+    def path_is_optimistically_deleted(self, path: str) -> bool:
+        return self.global_delete_covers(path, getattr(self, "optimistic_global_deletions", {}))
+
+    def add_optimistic_global_deletion(self, path: str, recursive: bool) -> None:
+        self.optimistic_global_deletions[path] = recursive
+        self.remote_manifest_cache = [
+            entry for entry in self.remote_manifest_cache
+            if not self.global_delete_covers(str(entry.get("path") or ""), {path: recursive})
+        ]
+        self.selected_remote_entry = None
+        cli.save_json(GLOBAL_DELETE_OVERLAY_PATH, {"paths": self.optimistic_global_deletions})
+
+    def finish_global_delete(self, path: str, error: Exception | None) -> None:
+        if error is not None:
+            self.optimistic_global_deletions.pop(path, None)
+            cli.save_json(GLOBAL_DELETE_OVERLAY_PATH, {"paths": self.optimistic_global_deletions})
+            self.status.set("Delete failed")
             self.refresh_files(force_live=True)
-        except Exception as exc:
-            messagebox.showerror("FreeCloud Files", str(exc))
+            messagebox.showerror("FreeCloud Files", str(error))
+            return
+        self.append(f"Global delete requested: /{path}\n")
+        self.status.set("Deletion queued")
+        self.refresh_files(force_live=True)
+
+    def confirm_global_deletions_from_refresh(
+        self, folder_path: str, entries: list[dict[str, object]]
+    ) -> None:
+        folder = cli.remote_path(folder_path)
+        local_root = Path(str(self.config_data().get("local_root") or "")).expanduser()
+        visible = {cli.remote_path(str(entry.get("path") or "")) for entry in entries}
+        cleared: list[str] = []
+        for path in self.optimistic_global_deletions:
+            parent = path.rpartition("/")[0]
+            if parent != folder or path in visible:
+                continue
+            local_copy = local_root / path if str(local_root) else Path(path)
+            if not local_copy.exists():
+                cleared.append(path)
+        cleared_scopes = [path for path in cleared if self.optimistic_global_deletions.get(path, False)]
+        for path in list(self.optimistic_global_deletions):
+            if path in cleared or any(path.startswith(scope + "/") for scope in cleared_scopes):
+                self.optimistic_global_deletions.pop(path, None)
+        if cleared:
+            cli.save_json(GLOBAL_DELETE_OVERLAY_PATH, {"paths": self.optimistic_global_deletions})
 
     def download_remote_item(self, path: str, name: str, is_dir: bool) -> None:
         config = self.config_data()
@@ -2962,6 +4135,25 @@ class FreeCloudUi:
 
     def set_running(self, running: bool) -> None:
         self.sync_button_text.set("🛑\nStop Full Sync" if running else "▶\nStart Full Sync")
+        self.update_toolbar_sync_button()
+
+    def sync_is_running(self) -> bool:
+        return (self.process is not None and self.process.poll() is None) or self.background_sync_running()
+
+    def update_toolbar_sync_button(self) -> None:
+        button = getattr(self, "sync_toolbar_button", None)
+        if button is None:
+            return
+        running = self.sync_is_running()
+        button.command = self.stop_sync if running else self.start_sync
+        button.configure(
+            text="Stop Sync" if running else "Start Sync",
+            image=self.icons.toolbar_action("stop_sync" if running else "start_sync", 35),
+        )
+
+    def refresh_toolbar_sync_state(self) -> None:
+        self.update_toolbar_sync_button()
+        self.root.after(750, self.refresh_toolbar_sync_state)
 
     def save_setup(self) -> None:
         self.setup_button.configure(state=tk.DISABLED)
@@ -3028,6 +4220,8 @@ class FreeCloudUi:
             self.editing_settings = False
             self.refresh_setup_visibility()
             self.schedule_files_refresh()
+            self.schedule_reconciliation_poll(0)
+            self.root.after(1_000, self.start_sync_if_needed)
             self.append("Connected. Cloud browser is ready.\n")
         except Exception as exc:
             messagebox.showerror("FreeCloud Setup", str(exc))
@@ -3066,6 +4260,7 @@ class FreeCloudUi:
             bufsize=1,
         )
         self.set_running(True)
+        self.status.set("Syncing")
         startup_log("foreground sync process started")
 
         thread = threading.Thread(target=self.read_output, daemon=True)
@@ -3086,9 +4281,16 @@ class FreeCloudUi:
                 if item is None:
                     if not self.closing_for_background:
                         self.set_running(False)
+                        return_code = self.process.returncode if self.process is not None else 0
+                        self.status.set("Sync error" if return_code not in (None, 0) else "Stopped")
                         self.append("\nProcess stopped.\n")
                     self.process = None
                 else:
+                    lowered = item.strip().lower()
+                    if lowered.startswith("sync error:"):
+                        self.status.set("Sync error")
+                    elif lowered.startswith("syncing ") or lowered.startswith("watching for changes"):
+                        self.status.set("Syncing")
                     self.append(item)
         except queue.Empty:
             pass
@@ -3096,6 +4298,14 @@ class FreeCloudUi:
 
     def start_sync(self) -> None:
         self.start_process(once=False)
+
+    def start_sync_if_needed(self) -> None:
+        if not self.config_data():
+            return
+        if self.sync_is_running():
+            self.status.set("Syncing")
+            return
+        self.start_sync()
 
     def sync_once(self) -> None:
         self.start_process(once=True)
@@ -3210,6 +4420,7 @@ class FreeCloudUi:
             pass
 
     def exit_keep_syncing(self) -> None:
+        self.stop_reconciliation_worker()
         if self.process is not None and self.process.poll() is None:
             if self.launch_background_sync():
                 launch_tray_indicator()
@@ -3226,12 +4437,57 @@ class FreeCloudUi:
             launch_tray_indicator()
         self.root.destroy()
 
+    def ask_background_close_choice(self) -> bool:
+        dialog = tk.Toplevel(self.root)
+        dialog.withdraw()
+        dialog.title("FreeCloud Sync")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        dialog.protocol("WM_DELETE_WINDOW", lambda: (setattr(dialog, "choice", False), dialog.destroy()))
+        dialog.choice = False
+        content = tk.Frame(dialog, padx=16, pady=12)
+        content.grid(row=0, column=0, sticky="nsew")
+        dialog.grid_columnconfigure(0, weight=1)
+        content.grid_columnconfigure(0, weight=1)
+        tk.Label(
+            content, text="Continue running in Background?",
+            font=("TkDefaultFont", 10),
+            anchor="center",
+        ).grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        buttons = tk.Frame(content)
+        buttons.grid(row=1, column=0)
+        ttk.Button(
+            buttons, text="Run in Background",
+            command=lambda: (setattr(dialog, "choice", True), dialog.destroy()),
+            width=16,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(
+            buttons, text="Close",
+            command=lambda: (setattr(dialog, "choice", False), dialog.destroy()),
+            width=10,
+        ).pack(side=tk.LEFT)
+        dialog.update_idletasks()
+        width = max(310, dialog.winfo_reqwidth())
+        height = max(105, dialog.winfo_reqheight())
+        dialog.minsize(width, height)
+        parent_x, parent_y = self.root.winfo_rootx(), self.root.winfo_rooty()
+        parent_w, parent_h = self.root.winfo_width(), self.root.winfo_height()
+        if parent_w <= 1 or parent_h <= 1:
+            parent_x, parent_y = 0, 0
+            parent_w, parent_h = dialog.winfo_screenwidth(), dialog.winfo_screenheight()
+        x = max(0, min(parent_x + (parent_w - width) // 2, dialog.winfo_screenwidth() - width))
+        y = max(0, min(parent_y + (parent_h - height) // 2, dialog.winfo_screenheight() - height))
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+        dialog.deiconify()
+        dialog.grab_set()
+        dialog.focus_set()
+        dialog.wait_window()
+        return bool(dialog.choice)
+
     def on_close(self) -> None:
+        self.stop_reconciliation_worker()
         if self.process is not None and self.process.poll() is None:
-            keep_running = messagebox.askyesno(
-                "FreeCloud Sync",
-                "Continue running in Background?\n\nYes: minimize to tray\nNo: close everything",
-            )
+            keep_running = self.ask_background_close_choice()
             if keep_running:
                 self.exit_keep_syncing()
                 return
@@ -3242,10 +4498,7 @@ class FreeCloudUi:
                 self.process.kill()
             stop_tray_indicator()
         elif self.background_sync_running():
-            keep_running = messagebox.askyesno(
-                "FreeCloud Sync",
-                "Continue running in Background?\n\nYes: minimize to tray\nNo: close everything",
-            )
+            keep_running = self.ask_background_close_choice()
             if not keep_running:
                 pid = self.background_pid()
                 if pid is not None:
@@ -3256,6 +4509,22 @@ class FreeCloudUi:
         else:
             stop_tray_indicator()
         self.root.destroy()
+
+    def stop_reconciliation_worker(self) -> None:
+        self.reconciliation_stop.set()
+        if self.reconciliation_poll_after_id is not None:
+            try:
+                self.root.after_cancel(self.reconciliation_poll_after_id)
+            except tk.TclError:
+                pass
+            self.reconciliation_poll_after_id = None
+        local_scan_after_id = getattr(self, "local_manifest_scan_after_id", None)
+        if local_scan_after_id is not None:
+            try:
+                self.root.after_cancel(local_scan_after_id)
+            except tk.TclError:
+                pass
+            self.local_manifest_scan_after_id = None
 
     def open_path_with_default_app(self, path: Path) -> None:
         if os.name == "nt":

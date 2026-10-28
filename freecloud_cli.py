@@ -69,6 +69,20 @@ def app_state_dir() -> Path:
     return Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local" / "state"))) / APP_NAME
 
 
+def desktop_ui_running() -> bool:
+    """Check whether the companion desktop UI currently owns local inventory."""
+    try:
+        pid = int(UI_PID_PATH.read_text(encoding="utf-8").strip())
+        if pid <= 0:
+            return False
+        os.kill(pid, 0)
+        return True
+    except PermissionError:
+        return True
+    except (FileNotFoundError, ValueError, ProcessLookupError, OSError):
+        return False
+
+
 CONFIG_DIR = app_config_dir()
 STATE_DIR = app_state_dir()
 LAST_CONFIG_PATH = CONFIG_DIR / "last_config.json"
@@ -76,6 +90,7 @@ DEVICE_CONFIG_PATH = CONFIG_DIR / "device.json"
 NODE_RULES_PATH = CONFIG_DIR / "sync_rules.json"
 NODE_STATE_PATH = STATE_DIR / "node_state.json"
 NODE_LOG_PATH = STATE_DIR / "freecloud-node.log"
+UI_PID_PATH = STATE_DIR / "ui.pid"
 
 
 class FreeCloudApiError(RuntimeError):
@@ -268,6 +283,9 @@ class FreeCloudClient:
     def delete(self, path: str) -> None:
         self.request("delete", {"path": remote_path(path)}, data=b"", method="POST")
 
+    def global_delete(self, path: str, recursive: bool = False) -> dict[str, Any]:
+        return self.post_json("global_delete", {"path": remote_path(path), "recursive": bool(recursive)})
+
     def register_device(
         self,
         name: str,
@@ -288,8 +306,23 @@ class FreeCloudClient:
     def heartbeat(self, device_id: str) -> dict[str, Any]:
         return self.post_json("heartbeat", {"device_id": device_id})
 
-    def publish_manifest(self, device_id: str, entries: list[dict[str, Any]]) -> dict[str, Any]:
-        return self.post_json("publish_manifest", {"device_id": device_id, "entries": entries})
+    def rename_device(self, device_id: str, name: str) -> dict[str, Any]:
+        return self.post_json("rename_device", {"device_id": device_id, "name": name})
+
+    def remove_device(self, device_id: str) -> dict[str, Any]:
+        return self.post_json("remove_device", {"device_id": device_id})
+
+    def publish_manifest(
+        self,
+        device_id: str,
+        entries: list[dict[str, Any]],
+        *,
+        complete: bool = False,
+    ) -> dict[str, Any]:
+        return self.post_json(
+            "publish_manifest",
+            {"device_id": device_id, "entries": entries, "complete": complete},
+        )
 
     def metadata_manifest(self) -> list[dict[str, Any]]:
         data = self.request("metadata_manifest", {"_": time.time_ns()})
@@ -298,6 +331,60 @@ class FreeCloudClient:
     def metadata_list(self, path: str = "") -> list[dict[str, Any]]:
         data = self.request("metadata_list", {"path": remote_path(path)})
         return list(data.get("entries", []))
+
+    def get_placement(self, path: str) -> dict[str, Any]:
+        return self.request("get_placement", {"path": remote_path(path)})
+
+    def placement_rules(self) -> dict[str, Any]:
+        return dict(self.request("placement_rules", {"_": time.time_ns()}))
+
+    def placement_managed_paths(self, paths: list[str]) -> set[str]:
+        """Return paths owned by the desired-placement reconciler in one request."""
+        normalized = sorted({remote_path(path) for path in paths if remote_path(path)})
+        if not normalized:
+            return set()
+        if len(normalized) > 20_000:
+            raise RuntimeError("Too many changed paths to check placement ownership safely.")
+        data = self.post_json("placement_ownership", {"paths": normalized})
+        return {remote_path(str(path)) for path in data.get("managed_paths", []) if remote_path(str(path))}
+
+    def adopt_existing_locations(self) -> dict[str, Any]:
+        return self.post_json("adopt_existing_locations", {})
+
+    def set_desired_location(
+        self,
+        path: str,
+        device_id: str,
+        desired: bool,
+        recursive: bool = False,
+    ) -> dict[str, Any]:
+        return self.post_json(
+            "set_desired_location",
+            {
+                "path": remote_path(path),
+                "device_id": device_id,
+                "desired": desired,
+                "recursive": recursive,
+            },
+        )
+
+    def recreate_path(
+        self,
+        path: str,
+        source_device_id: str,
+        desired_device_id: str,
+        recursive: bool = False,
+    ) -> dict[str, Any]:
+        """Explicitly start a new generation over a prior global tombstone."""
+        return self.post_json(
+            "recreate_path",
+            {
+                "path": remote_path(path),
+                "source_device_id": source_device_id,
+                "desired_device_id": desired_device_id,
+                "recursive": bool(recursive),
+            },
+        )
 
     def get_sync_rules(self, device_id: str) -> list[dict[str, Any]]:
         data = self.request("get_sync_rules", {"device_id": device_id})
@@ -337,6 +424,69 @@ class FreeCloudClient:
         self.post_json(
             "fail_transfer",
             {"device_id": device_id, "transfer_id": transfer_id, "error": error[:500]},
+        )
+
+    def poll_reconciliation(self, device_id: str, check_only: bool = False) -> list[dict[str, Any]]:
+        data = self.post_json("poll_reconciliation", {"device_id": device_id, "check_only": check_only})
+        return list(data.get("jobs", []))
+
+    def download_reconciliation(self, device_id: str, job_id: str, target: Path) -> tuple[int, str]:
+        headers = {"User-Agent": "FreeCloudCLI/1", "X-FreeCloud-Device": device_id}
+        if self.password:
+            headers["X-FreeCloud-Password"] = self.password
+        request = urllib.request.Request(
+            self.api_url("download_reconciliation", {"job_id": job_id, "device_id": device_id}),
+            headers=headers,
+        )
+        digest = hashlib.sha256()
+        written = 0
+        with urllib.request.urlopen(request, timeout=120) as response, target.open("wb") as output:
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                output.write(chunk)
+                digest.update(chunk)
+                written += len(chunk)
+            output.flush()
+            os.fsync(output.fileno())
+        return written, digest.hexdigest()
+
+    def acknowledge_reconciliation(self, device_id: str, job_id: str, status: str, error: str = "") -> dict[str, Any]:
+        return self.post_json(
+            "ack_reconciliation",
+            {"device_id": device_id, "job_id": job_id, "status": status, "error": error[:500]},
+        )
+
+    def report_location_hash(self, device_id: str, job_id: str, sha256: str = "", error: str = "") -> dict[str, Any]:
+        return self.post_json(
+            "report_location_hash", {"device_id": device_id, "job_id": job_id, "hash": sha256, "error": error[:500]}
+        )
+
+    def upload_reconciliation(self, device_id: str, job_id: str, source: Path, sha256: str) -> dict[str, Any]:
+        headers = {
+            "User-Agent": "FreeCloudCLI/1", "X-FreeCloud-Device": device_id,
+            "X-FreeCloud-SHA256": sha256, "Content-Type": "application/octet-stream",
+            "Content-Length": str(source.stat().st_size),
+        }
+        if self.password:
+            headers["X-FreeCloud-Password"] = self.password
+        with source.open("rb") as handle:
+            request = urllib.request.Request(
+                self.api_url("upload_reconciliation", {"job_id": job_id, "device_id": device_id}),
+                headers=headers, data=handle, method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=120) as response:
+                    return dict(json.loads(response.read().decode("utf-8")))
+            except urllib.error.HTTPError as exc:
+                body = exc.read().decode("utf-8", errors="replace")
+                raise FreeCloudApiError(f"HTTP {exc.code} uploading reconciliation.", request.full_url, exc.code, body) from exc
+
+    def commit_reconciliation(self, device_id: str, job_id: str, source_unchanged: bool) -> dict[str, Any]:
+        return self.post_json(
+            "commit_reconciliation",
+            {"device_id": device_id, "job_id": job_id, "source_unchanged": source_unchanged},
         )
 
 
@@ -465,12 +615,69 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def remove_globally_deleted_path(target: Path, deleted_at: int) -> int:
+    """Apply a global-delete job locally, keeping anything newer than the deletion.
+
+    A file whose modification or inode-change time is later than the server's
+    ``deleted_at`` was created, copied in, or edited after the delete was
+    requested, so it is new content reusing the name and is never removed.
+    Folders are removed only once empty. Returns how many files were kept.
+    Jobs from older servers carry no ``deleted_at`` and keep the old behaviour.
+    """
+    if deleted_at <= 0:
+        if target.is_symlink():
+            target.unlink()
+        elif target.is_dir():
+            shutil.rmtree(target)
+        elif target.exists():
+            target.unlink()
+        return 0
+
+    def newer(path: Path) -> bool:
+        stat = path.lstat()
+        return max(int(stat.st_mtime), int(stat.st_ctime)) > deleted_at + 2
+
+    if target.is_symlink() or (target.exists() and not target.is_dir()):
+        if newer(target):
+            return 1
+        target.unlink()
+        return 0
+    if not target.is_dir():
+        return 0
+    kept = 0
+    for current, dirnames, filenames in os.walk(target, topdown=False):
+        folder = Path(current)
+        for name in filenames:
+            path = folder / name
+            if newer(path):
+                kept += 1
+            else:
+                path.unlink()
+        for name in dirnames:
+            path = folder / name
+            if path.is_symlink():
+                if newer(path):
+                    kept += 1
+                else:
+                    path.unlink()
+                continue
+            try:
+                path.rmdir()
+            except OSError:
+                pass  # still holds kept content
+    try:
+        target.rmdir()
+    except OSError:
+        pass
+    return kept
+
+
 def node_rule_manifest(rule: dict[str, Any], include_hashes: bool = False) -> list[dict[str, Any]]:
     local_root = Path(str(rule.get("local_path") or "")).expanduser()
     remote_root = remote_path(str(rule.get("remote_path") or ""))
     recursive = bool(rule.get("recursive", True))
     if not local_root.exists():
-        return []
+        raise RuntimeError(f"Configured storage root is missing: {local_root}")
 
     entries: list[dict[str, Any]] = []
 
@@ -483,8 +690,8 @@ def node_rule_manifest(rule: dict[str, Any], include_hashes: bool = False) -> li
             return
         try:
             stat = path.stat()
-        except FileNotFoundError:
-            return
+        except FileNotFoundError as exc:
+            raise RuntimeError(f"Storage changed during manifest scan: {path}") from exc
         is_dir = path.is_dir()
         entry = {
             "path": target,
@@ -500,7 +707,10 @@ def node_rule_manifest(rule: dict[str, Any], include_hashes: bool = False) -> li
         add_entry(local_root)
         return entries
 
-    for current_root, dir_names, file_names in os.walk(local_root, followlinks=False):
+    def walk_error(error: OSError) -> None:
+        raise error
+
+    for current_root, dir_names, file_names in os.walk(local_root, followlinks=False, onerror=walk_error):
         current = Path(current_root)
         if current == local_root:
             add_entry(current)
@@ -528,11 +738,328 @@ def node_rule_manifest(rule: dict[str, Any], include_hashes: bool = False) -> li
 def node_manifest(rules: list[dict[str, Any]], include_hashes: bool = False) -> list[dict[str, Any]]:
     entries: dict[str, dict[str, Any]] = {}
     for rule in rules:
-        if normalize_rule_mode(str(rule.get("mode") or "browse_only")) not in {"storage_only", "sync", "upload_only"}:
+        if normalize_rule_mode(str(rule.get("mode") or "browse_only")) not in {
+            "storage_only", "sync", "upload_only", "download_only", "keep_offline"
+        }:
             continue
         for entry in node_rule_manifest(rule, include_hashes=include_hashes):
             entries[str(entry["path"])] = entry
     return [entries[path] for path in sorted(entries)]
+
+
+def desktop_manifest(local_root: Path) -> list[dict[str, Any]]:
+    """Describe actual desktop storage without reading file contents."""
+    return desktop_manifest_from_local(local_manifest(local_root))
+
+
+def desktop_manifest_from_local(local: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    entries = []
+    for path, entry in sorted(local.items()):
+        entries.append(
+            {
+                **entry,
+                "name": Path(path).name,
+                "hash": "",
+            }
+        )
+    return entries
+
+
+def desktop_manifest_signature(entries: list[dict[str, Any]]) -> str:
+    """Fingerprint inventory metadata only; never reads or hashes file bytes."""
+    digest = hashlib.sha256()
+    for entry in sorted(entries, key=lambda item: str(item.get("path") or "")):
+        digest.update(
+            "\0".join(
+                (
+                    remote_path(str(entry.get("path") or "")),
+                    str(entry.get("type") or ""),
+                    str(int(entry.get("size") or 0)),
+                    str(int(entry.get("mtime") or 0)),
+                )
+            ).encode("utf-8", errors="surrogatepass")
+        )
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def register_desktop_device(client: FreeCloudClient) -> dict[str, Any]:
+    existing = load_device_config()
+    device_id = str(existing.get("device_id") or new_device_id())
+    name = str(existing.get("name") or default_device_name())
+    existing_capabilities = [str(value) for value in existing.get("capabilities", [])]
+    is_storage_node = "storage_node" in existing_capabilities
+    device_type = str(existing.get("type") or "desktop") if is_storage_node else "desktop"
+    capabilities = list(
+        dict.fromkeys(
+            existing_capabilities
+            + ["metadata", "local_storage", "desktop", "background_sync", "keep_offline"]
+        )
+    )
+    response = client.register_device(name, device_type, device_id, capabilities)
+    device = dict(response.get("device") or {})
+    if not device:
+        raise RuntimeError("The server did not return desktop device metadata.")
+    save_device_config(device)
+    return device
+
+
+def publish_desktop_manifest_snapshot(
+    client: FreeCloudClient, local_root: Path
+) -> tuple[dict[str, Any], int, str]:
+    device = register_desktop_device(client)
+    entries = desktop_manifest(local_root)
+    client.publish_manifest(str(device["device_id"]), entries, complete=True)
+    return device, len(entries), desktop_manifest_signature(entries)
+
+
+def publish_desktop_manifest(client: FreeCloudClient, local_root: Path) -> tuple[dict[str, Any], int]:
+    device, count, _signature = publish_desktop_manifest_snapshot(client, local_root)
+    return device, count
+
+
+def publish_desktop_manifest_entries(
+    client: FreeCloudClient, entries: list[dict[str, Any]]
+) -> tuple[dict[str, Any], int, str]:
+    """Publish a previously scanned stable snapshot as an authoritative manifest."""
+    device = register_desktop_device(client)
+    client.publish_manifest(str(device["device_id"]), entries, complete=True)
+    return device, len(entries), desktop_manifest_signature(entries)
+
+
+def desktop_background_cycle(
+    client: FreeCloudClient, local_root: Path, inventory_state: dict[str, str]
+) -> tuple[dict[str, int], bool, dict[str, dict[str, Any]]]:
+    """Publish stable inventory and process queued work when the GUI is closed.
+
+    Returns whether local-only paths are safe for the legacy pass. A changed
+    snapshot must be seen twice before publication so an in-progress copy is
+    not announced as complete.
+    """
+    local = local_manifest(local_root)
+    entries = desktop_manifest_from_local(local)
+    signature = desktop_manifest_signature(entries)
+    published = inventory_state.get("published_signature", "")
+    candidate = inventory_state.get("candidate_signature", "")
+    snapshot_ready = signature == published
+    if signature != published:
+        if signature == candidate:
+            device, _count, signature = publish_desktop_manifest_entries(client, entries)
+            inventory_state["device_id"] = str(device.get("device_id") or "")
+            inventory_state["published_signature"] = signature
+            inventory_state["candidate_signature"] = ""
+            snapshot_ready = True
+        else:
+            inventory_state["candidate_signature"] = signature
+
+    device_id = inventory_state.get("device_id") or str(load_device_config().get("device_id") or "")
+    if not device_id:
+        device_id = str(register_desktop_device(client).get("device_id") or "")
+        inventory_state["device_id"] = device_id
+    if not device_id:
+        raise RuntimeError("Desktop device identity is unavailable for background reconciliation.")
+
+    counts = process_desktop_reconciliation(client, device_id, local_root)
+    if counts.get("installed", 0):
+        # The reconciler installs atomically, but an unrelated OS copy could
+        # still be in progress. Require the changed whole-tree inventory to
+        # remain stable before publishing its next complete snapshot.
+        local = local_manifest(local_root)
+        after_signature = desktop_manifest_signature(desktop_manifest_from_local(local))
+        if after_signature == inventory_state.get("published_signature", ""):
+            inventory_state["candidate_signature"] = ""
+            snapshot_ready = True
+        else:
+            inventory_state["candidate_signature"] = after_signature
+            snapshot_ready = False
+    return counts, snapshot_ready, local
+
+
+def desktop_reconciliation_path(local_root: Path, virtual_path: str) -> Path:
+    clean = remote_path(virtual_path)
+    if not clean or is_protected_path(clean):
+        raise RuntimeError(f"Unsafe reconciliation path: {virtual_path}")
+    root = local_root.expanduser().resolve()
+    parts = clean.split("/")
+    target = root.joinpath(*parts)
+    current = root
+    for part in parts[:-1]:
+        current /= part
+        if current.exists() and current.is_symlink():
+            raise RuntimeError(f"Reconciliation path uses a symbolic link: {virtual_path}")
+    try:
+        target.parent.resolve().relative_to(root)
+    except (FileNotFoundError, ValueError) as exc:
+        raise RuntimeError(f"Reconciliation path escapes the local root: {virtual_path}") from exc
+    return target
+
+
+def process_desktop_reconciliation(
+    client: FreeCloudClient, device_id: str, local_root: Path, check_only: bool = False
+) -> dict[str, int]:
+    jobs = client.poll_reconciliation(device_id, check_only=True) if check_only else client.poll_reconciliation(device_id)
+    counts = {"installed": 0, "uploaded": 0, "conflicts": 0, "failed": 0, "jobs": len(jobs)}
+    for job in jobs:
+        if str(job.get("status") or "") == "queued_hash":
+            try:
+                path = desktop_reconciliation_path(local_root, str(job.get("path") or ""))
+                stat = path.stat()
+                if not path.is_file() or stat.st_size != int(job.get("expected_size") or 0) or abs(int(stat.st_mtime) - int(job.get("expected_mtime") or 0)) > 2:
+                    raise RuntimeError("Local copy changed; hash proof was refused.")
+                client.report_location_hash(device_id, str(job.get("job_id") or ""), file_sha256(path))
+            except Exception as exc:
+                counts["conflicts"] += 1
+                try:
+                    client.report_location_hash(device_id, str(job.get("job_id") or ""), error=str(exc))
+                except Exception:
+                    pass
+            continue
+        if str(job.get("status") or "") == "queued_delete":
+            job_id = str(job.get("job_id") or "")
+            try:
+                target = desktop_reconciliation_path(local_root, str(job.get("path") or ""))
+                remove_globally_deleted_path(target, int(job.get("deleted_at") or 0))
+                client.acknowledge_reconciliation(device_id, job_id, "deleted")
+                counts["installed"] += 1
+            except Exception as exc:
+                try:
+                    client.acknowledge_reconciliation(device_id, job_id, "failed", str(exc))
+                except Exception:
+                    pass
+                counts["failed"] += 1
+            continue
+        if str(job.get("status") or "") == "queued_remove":
+            job_id = str(job.get("job_id") or "")
+            try:
+                removal_facts = job.get("removal_facts")
+                if not isinstance(removal_facts, dict) or not removal_facts:
+                    raise RuntimeError("Removal job has no verified facts.")
+                for virtual_path, facts in removal_facts.items():
+                    if not isinstance(facts, dict) or str(facts.get("type") or "file") == "dir":
+                        continue
+                    local_file = desktop_reconciliation_path(local_root, str(virtual_path))
+                    if not local_file.exists():
+                        continue
+                    stat = local_file.stat()
+                    if stat.st_size != int(facts.get("size") or 0) or abs(int(stat.st_mtime) - int(facts.get("mtime") or 0)) > 2:
+                        raise RuntimeError("Local copy changed; removal was refused.")
+                    expected_hash = str(facts.get("hash") or "").lower()
+                    if len(expected_hash) != 64 or file_sha256(local_file) != expected_hash:
+                        raise RuntimeError("Local copy could not be verified by SHA-256; removal was refused.")
+                target = desktop_reconciliation_path(local_root, str(job.get("path") or ""))
+                if target.is_dir() and not target.is_symlink():
+                    job_path = remote_path(str(job.get("path") or ""))
+                    actual_paths = {job_path}
+                    actual_paths.update(
+                        remote_path(f"{job_path}/{item.relative_to(target).as_posix()}")
+                        for item in target.rglob("*") if not item.is_symlink()
+                    )
+                    if not actual_paths.issubset({remote_path(str(value)) for value in removal_facts}):
+                        raise RuntimeError("Local folder changed; removal was refused.")
+                    shutil.rmtree(target)
+                elif target.exists():
+                    target.unlink()
+                client.acknowledge_reconciliation(device_id, job_id, "removed")
+                counts["installed"] += 1
+            except Exception as exc:
+                try:
+                    client.acknowledge_reconciliation(device_id, job_id, "conflict", str(exc))
+                except Exception:
+                    pass
+                counts["conflicts"] += 1
+            continue
+        if str(job.get("status") or "") == "queued_source":
+            try:
+                job_id = str(job.get("job_id") or "")
+                source = desktop_reconciliation_path(local_root, str(job.get("path") or ""))
+                expected_size = int(job.get("expected_size") or 0)
+                expected_mtime = int(job.get("expected_mtime") or 0)
+                if not source.is_file():
+                    raise RuntimeError("Requested desktop source file is unavailable.")
+                before = source.stat()
+                if before.st_size != expected_size or abs(int(before.st_mtime) - expected_mtime) > 2:
+                    client.commit_reconciliation(device_id, job_id, False)
+                    counts["conflicts"] += 1
+                    continue
+                source_hash = file_sha256(source)
+                after_hash = source.stat()
+                if after_hash.st_size != before.st_size or after_hash.st_mtime_ns != before.st_mtime_ns:
+                    client.commit_reconciliation(device_id, job_id, False)
+                    counts["conflicts"] += 1
+                    continue
+                client.upload_reconciliation(device_id, job_id, source, source_hash)
+                after_upload = source.stat()
+                source_unchanged = (
+                    after_upload.st_size == before.st_size and after_upload.st_mtime_ns == before.st_mtime_ns
+                )
+                result = client.commit_reconciliation(device_id, job_id, source_unchanged)
+                status = str(dict(result.get("job") or {}).get("status") or "")
+                if status in {"complete", "ready"}:
+                    counts["uploaded"] += 1
+                else:
+                    counts["conflicts"] += 1
+            except Exception:
+                counts["failed"] += 1
+            continue
+        if str(job.get("status") or "") != "ready":
+            if str(job.get("status") or "") == "conflict":
+                counts["conflicts"] += 1
+            continue
+        job_id = str(job.get("job_id") or "")
+        path = str(job.get("path") or "")
+        temp_file: Path | None = None
+        try:
+            target = desktop_reconciliation_path(local_root, path)
+            expected_size = int(job.get("expected_size") or 0)
+            expected_mtime = int(job.get("expected_mtime") or 0)
+            expected_hash = str(job.get("hash") or "").lower()
+            if target.exists():
+                if not target.is_file():
+                    raise FileExistsError("A non-file already exists at the destination.")
+                target_stat = target.stat()
+                same_size = target_stat.st_size == expected_size
+                same_hash = same_size and expected_hash != "" and file_sha256(target) == expected_hash
+                if same_hash:
+                    client.acknowledge_reconciliation(device_id, job_id, "installed")
+                    counts["installed"] += 1
+                    continue
+                planned = job.get("destination_facts")
+                safely_unchanged = (
+                    isinstance(planned, dict)
+                    and target_stat.st_size == int(planned.get("size") or 0)
+                    and abs(int(target_stat.st_mtime) - int(planned.get("mtime") or 0)) <= 2
+                )
+                if not safely_unchanged:
+                    client.acknowledge_reconciliation(
+                        device_id, job_id, "conflict", "The local destination changed; it was not overwritten."
+                    )
+                    counts["conflicts"] += 1
+                    continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temp_file = target.with_name(f".{target.name}.freecloud-part-{job_id}")
+            written, actual_hash = client.download_reconciliation(device_id, job_id, temp_file)
+            if written != expected_size:
+                raise RuntimeError(f"Downloaded size mismatch: expected {expected_size}, received {written}.")
+            if not expected_hash or actual_hash != expected_hash:
+                raise RuntimeError("Downloaded SHA-256 does not match the staged source.")
+            os.replace(temp_file, target)
+            temp_file = None
+            if expected_mtime > 0:
+                os.utime(target, (expected_mtime, expected_mtime))
+            client.acknowledge_reconciliation(device_id, job_id, "installed")
+            counts["installed"] += 1
+        except Exception as exc:
+            if temp_file is not None:
+                try:
+                    temp_file.unlink()
+                except FileNotFoundError:
+                    pass
+            try:
+                client.acknowledge_reconciliation(device_id, job_id, "failed", str(exc))
+            except Exception:
+                pass
+            counts["failed"] += 1
+    return counts
 
 
 def missing_publish_roots(rules: list[dict[str, Any]]) -> list[str]:
@@ -542,7 +1069,7 @@ def missing_publish_roots(rules: list[dict[str, Any]]) -> list[str]:
             mode = normalize_rule_mode(str(rule.get("mode") or "browse_only"))
         except ValueError:
             continue
-        if mode not in {"storage_only", "sync", "upload_only"}:
+        if mode not in {"storage_only", "sync", "upload_only", "download_only", "keep_offline"}:
             continue
         local_path = str(rule.get("local_path") or "")
         if local_path and not Path(local_path).expanduser().exists():
@@ -567,19 +1094,21 @@ def server_rules_from_node_rules(rules: list[dict[str, Any]]) -> list[dict[str, 
     return server_rules
 
 
-def local_path_for_virtual_path(rules: list[dict[str, Any]], virtual_path: str) -> Path | None:
+def local_path_for_virtual_path(
+    rules: list[dict[str, Any]], virtual_path: str, *, writable: bool = False, allow_storage_only: bool = False
+) -> Path | None:
     """Resolve a published virtual file through the most-specific serving rule."""
+    if any(part.strip() == ".." for part in virtual_path.replace("\\", "/").split("/")):
+        return None
     requested = remote_path(virtual_path)
-    candidates: list[tuple[int, Path]] = []
+    candidates: list[tuple[int, str, Path]] = []
     for rule in rules:
         try:
             mode = normalize_rule_mode(str(rule.get("mode") or "browse_only"))
         except ValueError:
             continue
-        if mode not in {"storage_only", "sync", "upload_only"}:
-            continue
         remote_root = remote_path(str(rule.get("remote_path") or ""))
-        if requested != remote_root and not requested.startswith(remote_root + "/"):
+        if remote_root and requested != remote_root and not requested.startswith(remote_root + "/"):
             continue
         suffix = requested[len(remote_root) :].lstrip("/")
         if suffix and not bool(rule.get("recursive", True)) and "/" in suffix:
@@ -590,10 +1119,166 @@ def local_path_for_virtual_path(rules: list[dict[str, Any]], virtual_path: str) 
             candidate.relative_to(local_root)
         except ValueError:
             continue
-        candidates.append((len(remote_root), candidate))
+        candidates.append((len(remote_root), mode, candidate))
     if not candidates:
         return None
-    return max(candidates, key=lambda item: item[0])[1]
+    _, selected_mode, selected_path = max(candidates, key=lambda item: item[0])
+    allowed_modes = (
+        {"sync", "download_only", "keep_offline"} | ({"storage_only"} if allow_storage_only else set())
+        if writable else
+        {"storage_only", "sync", "upload_only", "download_only", "keep_offline"}
+    )
+    return selected_path if selected_mode in allowed_modes else None
+
+
+def process_node_reconciliation(
+    client: FreeCloudClient, device_id: str, rules: list[dict[str, Any]]
+) -> dict[str, int]:
+    counts = {"installed": 0, "uploaded": 0, "conflicts": 0, "failed": 0}
+    for job in client.poll_reconciliation(device_id):
+        job_id = str(job.get("job_id") or "")
+        path = str(job.get("path") or "")
+        status = str(job.get("status") or "")
+        temp_file: Path | None = None
+        try:
+            if status == "queued_hash":
+                try:
+                    source = local_path_for_virtual_path(rules, path)
+                    if source is None or not source.is_file():
+                        raise RuntimeError("No mapped local copy is available for hash verification.")
+                    stat = source.stat()
+                    if stat.st_size != int(job.get("expected_size") or 0) or abs(int(stat.st_mtime) - int(job.get("expected_mtime") or 0)) > 2:
+                        raise RuntimeError("Node copy changed; hash proof was refused.")
+                    client.report_location_hash(device_id, job_id, file_sha256(source))
+                except Exception as exc:
+                    client.report_location_hash(device_id, job_id, error=str(exc))
+                continue
+            if status == "queued_delete":
+                target = local_path_for_virtual_path(rules, path, writable=True, allow_storage_only=True)
+                if target is None:
+                    raise RuntimeError("Global-delete path is not mapped by a writable node rule.")
+                remove_globally_deleted_path(target, int(job.get("deleted_at") or 0))
+                client.acknowledge_reconciliation(device_id, job_id, "deleted")
+                counts["installed"] += 1
+                continue
+            if status == "queued_remove":
+                removal_facts = job.get("removal_facts")
+                if not isinstance(removal_facts, dict) or not removal_facts:
+                    raise RuntimeError("Removal job has no verified facts.")
+                for virtual_path, facts in removal_facts.items():
+                    if not isinstance(facts, dict) or str(facts.get("type") or "file") == "dir":
+                        continue
+                    local_file = local_path_for_virtual_path(rules, str(virtual_path), writable=True)
+                    if local_file is None:
+                        raise RuntimeError("Removal path is not mapped by a writable node rule.")
+                    if not local_file.exists():
+                        continue
+                    stat = local_file.stat()
+                    if stat.st_size != int(facts.get("size") or 0) or abs(int(stat.st_mtime) - int(facts.get("mtime") or 0)) > 2:
+                        raise RuntimeError("Node copy changed; removal was refused.")
+                    expected_hash = str(facts.get("hash") or "").lower()
+                    if len(expected_hash) != 64 or file_sha256(local_file) != expected_hash:
+                        raise RuntimeError("Node copy could not be verified by SHA-256; removal was refused.")
+                target = local_path_for_virtual_path(rules, path, writable=True)
+                if target is None:
+                    raise RuntimeError("Removal path is not mapped by a writable node rule.")
+                if target.is_dir() and not target.is_symlink():
+                    job_path = remote_path(path)
+                    actual_paths = {job_path}
+                    actual_paths.update(
+                        remote_path(f"{job_path}/{item.relative_to(target).as_posix()}")
+                        for item in target.rglob("*") if not item.is_symlink()
+                    )
+                    if not actual_paths.issubset({remote_path(str(value)) for value in removal_facts}):
+                        raise RuntimeError("Node folder changed; removal was refused.")
+                    shutil.rmtree(target)
+                elif target.exists():
+                    target.unlink()
+                client.acknowledge_reconciliation(device_id, job_id, "removed")
+                counts["installed"] += 1
+                continue
+            if status == "queued_source":
+                source = local_path_for_virtual_path(rules, path)
+                if source is None or not source.is_file():
+                    raise RuntimeError("Requested node source file is unavailable or unmapped.")
+                expected_size = int(job.get("expected_size") or 0)
+                expected_mtime = int(job.get("expected_mtime") or 0)
+                before = source.stat()
+                if before.st_size != expected_size or abs(int(before.st_mtime) - expected_mtime) > 2:
+                    client.commit_reconciliation(device_id, job_id, False)
+                    counts["conflicts"] += 1
+                    continue
+                source_hash = file_sha256(source)
+                hashed = source.stat()
+                if hashed.st_size != before.st_size or hashed.st_mtime_ns != before.st_mtime_ns:
+                    client.commit_reconciliation(device_id, job_id, False)
+                    counts["conflicts"] += 1
+                    continue
+                client.upload_reconciliation(device_id, job_id, source, source_hash)
+                after = source.stat()
+                result = client.commit_reconciliation(
+                    device_id, job_id,
+                    after.st_size == before.st_size and after.st_mtime_ns == before.st_mtime_ns,
+                )
+                if str(dict(result.get("job") or {}).get("status") or "") in {"complete", "ready"}:
+                    counts["uploaded"] += 1
+                else:
+                    counts["conflicts"] += 1
+                continue
+            if status == "conflict":
+                counts["conflicts"] += 1
+                continue
+            if status != "ready":
+                continue
+            target = local_path_for_virtual_path(rules, path, writable=True)
+            if target is None:
+                client.acknowledge_reconciliation(device_id, job_id, "failed", "No writable node rule maps this path.")
+                counts["failed"] += 1
+                continue
+            expected_size = int(job.get("expected_size") or 0)
+            expected_mtime = int(job.get("expected_mtime") or 0)
+            expected_hash = str(job.get("hash") or "").lower()
+            if target.exists():
+                if not target.is_file():
+                    raise FileExistsError("A non-file already exists at the node destination.")
+                target_stat = target.stat()
+                if target_stat.st_size == expected_size and expected_hash and file_sha256(target) == expected_hash:
+                    client.acknowledge_reconciliation(device_id, job_id, "installed")
+                    counts["installed"] += 1
+                    continue
+                planned = job.get("destination_facts")
+                unchanged = (
+                    isinstance(planned, dict)
+                    and target_stat.st_size == int(planned.get("size") or 0)
+                    and abs(int(target_stat.st_mtime) - int(planned.get("mtime") or 0)) <= 2
+                )
+                if not unchanged:
+                    client.acknowledge_reconciliation(device_id, job_id, "conflict", "Node destination changed; it was not overwritten.")
+                    counts["conflicts"] += 1
+                    continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temp_file = target.with_name(f".{target.name}.freecloud-part-{job_id}")
+            written, actual_hash = client.download_reconciliation(device_id, job_id, temp_file)
+            if written != expected_size or not expected_hash or actual_hash != expected_hash:
+                raise RuntimeError("Downloaded node file failed size or SHA-256 verification.")
+            os.replace(temp_file, target)
+            temp_file = None
+            if expected_mtime > 0:
+                os.utime(target, (expected_mtime, expected_mtime))
+            client.acknowledge_reconciliation(device_id, job_id, "installed")
+            counts["installed"] += 1
+        except Exception as exc:
+            if temp_file is not None:
+                try:
+                    temp_file.unlink()
+                except FileNotFoundError:
+                    pass
+            try:
+                client.acknowledge_reconciliation(device_id, job_id, "failed", str(exc))
+            except Exception:
+                pass
+            counts["failed"] += 1
+    return counts
 
 
 def process_node_transfers(client: FreeCloudClient, device_id: str, rules: list[dict[str, Any]]) -> int:
@@ -636,8 +1321,14 @@ def is_protected_path(path: str) -> bool:
 
 
 def local_manifest(local_root: Path) -> dict[str, dict[str, Any]]:
+    if not local_root.is_dir():
+        raise RuntimeError(f"Configured FreeCloud folder is unavailable: {local_root}")
     entries: dict[str, dict[str, Any]] = {}
-    for current_root, dir_names, file_names in os.walk(local_root, followlinks=False):
+
+    def walk_error(error: OSError) -> None:
+        raise error
+
+    for current_root, dir_names, file_names in os.walk(local_root, followlinks=False, onerror=walk_error):
         current = Path(current_root)
 
         kept_dirs = []
@@ -648,8 +1339,8 @@ def local_manifest(local_root: Path) -> dict[str, dict[str, Any]]:
                 continue
             try:
                 stat = path.stat()
-            except FileNotFoundError:
-                continue
+            except FileNotFoundError as exc:
+                raise RuntimeError(f"Storage changed during manifest scan: {path}") from exc
             entries[rel] = {
                 "path": rel,
                 "type": "dir",
@@ -666,8 +1357,8 @@ def local_manifest(local_root: Path) -> dict[str, dict[str, Any]]:
                 continue
             try:
                 stat = path.stat()
-            except FileNotFoundError:
-                continue
+            except FileNotFoundError as exc:
+                raise RuntimeError(f"Storage changed during manifest scan: {path}") from exc
             entries[rel] = {
                 "path": rel,
                 "type": "file",
@@ -693,7 +1384,14 @@ def roughly_equal(a: dict[str, Any], b: dict[str, Any]) -> bool:
     return int(a.get("size", -1)) == int(b.get("size", -2)) and abs(int(a.get("mtime", 0)) - int(b.get("mtime", 0))) <= 2
 
 
-def sync_once(client: FreeCloudClient, local_root: Path, delete_remote: bool = False) -> dict[str, int]:
+def sync_once(
+    client: FreeCloudClient,
+    local_root: Path,
+    delete_remote: bool = False,
+    *,
+    defer_local_only: bool = False,
+    local_snapshot: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, int]:
     local_root.mkdir(parents=True, exist_ok=True)
     saved_state = load_json(state_path(local_root), {})
     if not isinstance(saved_state, dict):
@@ -703,12 +1401,76 @@ def sync_once(client: FreeCloudClient, local_root: Path, delete_remote: bool = F
         for path, entry in saved_state.items()
         if not is_protected_path(path)
     }
-    local = local_manifest(local_root)
+    local = local_manifest(local_root) if local_snapshot is None else local_snapshot
     remote = remote_manifest(client)
+    managed_rules: list[dict[str, Any]] = []
+    try:
+        placement = client.placement_rules()
+        for group in (placement.get("desired_rules"), placement.get("sync_rules")):
+            for provider_rules in dict(group or {}).values():
+                if isinstance(provider_rules, list):
+                    managed_rules.extend(rule for rule in provider_rules if isinstance(rule, dict))
+    except AttributeError:
+        # Compatibility with clients predating the placement API.
+        for entry in client.metadata_manifest():
+            if entry.get("desired_locations"):
+                managed_rules.append({"path": str(entry.get("path") or ""), "recursive": False})
+    except FreeCloudApiError as exc:
+        if exc.code not in {400, 404, 405}:
+            # Fail closed on auth/network/server failures: legacy sync must not
+            # take ownership merely because placement state could not be read.
+            raise RuntimeError("Could not read placement rules; legacy sync was stopped safely.") from exc
+        for entry in client.metadata_manifest():
+            if entry.get("desired_locations"):
+                managed_rules.append({"path": str(entry.get("path") or ""), "recursive": False})
     all_paths = sorted(set(local) | set(remote) | set(previous))
     counts = {"uploaded": 0, "downloaded": 0, "deleted_local": 0, "deleted_remote": 0, "conflicts": 0}
 
+    # The legacy engine and the placement reconciler must not both operate on
+    # paths that have explicit rules or an implicit new-item placement default.
+    # Ask only for paths on which the legacy loop could actually act, avoiding
+    # a full Catalog download during routine idle sync cycles.
+    ownership_candidates = [
+        path for path in all_paths
+        if (local.get(path) is not None or remote.get(path) is not None)
+        and not (
+            local.get(path) is not None and remote.get(path) is not None
+            and roughly_equal(local[path], remote[path])
+        )
+    ]
+    managed_paths: set[str] = set()
+    ownership_check = getattr(client, "placement_managed_paths", None)
+    if callable(ownership_check) and ownership_candidates:
+        try:
+            managed_paths = ownership_check(ownership_candidates)
+        except FreeCloudApiError as exc:
+            raise RuntimeError("Could not check placement ownership; legacy sync was stopped safely.") from exc
+
+    # While the GUI is open, its complete-manifest publisher is authoritative
+    # for newly copied local-only paths. Deferring these prevents the companion
+    # legacy process from uploading them before the Catalog assigns placement.
+    ui_owns_unpublished_paths = desktop_ui_running()
     for path in all_paths:
+        if path in managed_paths:
+            continue
+        if (
+            (ui_owns_unpublished_paths or defer_local_only)
+            and local.get(path) is not None
+            and remote.get(path) is None
+        ):
+            continue
+        if any(
+            path == remote_path(str(rule.get("path") or ""))
+            or (
+                bool(rule.get("recursive", True))
+                and (
+                    not remote_path(str(rule.get("path") or ""))
+                    or path.startswith(remote_path(str(rule.get("path") or "")) + "/")
+                )
+            )
+            for rule in managed_rules
+        ):
+            continue
         # Three-way sync: compare local and remote against the last manifest
         # so deletes and edits can be handled differently.
         local_entry = local.get(path)
@@ -772,7 +1534,10 @@ def sync_once(client: FreeCloudClient, local_root: Path, delete_remote: bool = F
                     os.utime(local_file, (int(remote_entry["mtime"]), int(remote_entry["mtime"])))
                 counts["downloaded"] += 1
 
-    save_json(state_path(local_root), {**remote_manifest(client), **local_manifest(local_root)})
+    final_local = local
+    if local_snapshot is None or counts["downloaded"] or counts["deleted_local"]:
+        final_local = local_manifest(local_root)
+    save_json(state_path(local_root), {**remote_manifest(client), **final_local})
     return counts
 
 
@@ -1047,11 +1812,18 @@ def run_node_publish(args: argparse.Namespace) -> int:
             "Configured storage folder is missing; refusing to publish an empty listing: "
             + ", ".join(missing)
         )
+    if not any(
+        str(rule.get("mode") or "browse_only") in {
+            "storage_only", "sync", "upload_only", "download_only", "keep_offline"
+        }
+        for rule in rules
+    ):
+        raise RuntimeError("No active storage roots; refusing to publish an empty complete manifest.")
     entries = node_manifest(rules, include_hashes=args.hashes)
     client = client_from_saved_config()
     client.heartbeat(device_id)
     client.set_sync_rules(device_id, server_rules_from_node_rules(rules))
-    response = client.publish_manifest(device_id, entries)
+    response = client.publish_manifest(device_id, entries, complete=True)
     save_json(
         NODE_STATE_PATH,
         {
@@ -1075,6 +1847,10 @@ def run_node_daemon(args: argparse.Namespace) -> int:
             processed = process_node_transfers(client, device_id, load_node_rules())
             if processed:
                 print(f"Completed {processed} transfer(s).")
+            reconciliation = process_node_reconciliation(client, device_id, load_node_rules())
+            if reconciliation["installed"] or reconciliation["uploaded"]:
+                run_node_publish(argparse.Namespace(hashes=args.hashes))
+                print(f"Reconciled {reconciliation['installed'] + reconciliation['uploaded']} file(s).")
         except KeyboardInterrupt:
             print("Stopped.")
             return 0
@@ -1204,12 +1980,26 @@ def legacy_sync_main(argv: list[str] | None = None) -> int:
     local_root = Path(config["local_root"]).expanduser().resolve()
     client = FreeCloudClient(config["base_url"], config.get("password", ""))
     interval = max(2, int(args.interval or config.get("interval") or DEFAULT_INTERVAL))
+    background_inventory_state: dict[str, str] = {}
 
     print(f"Syncing {local_root} <-> {config['base_url']}")
     print(f"Watching for changes every {interval} seconds. Press Ctrl+C to stop.")
     while True:
         try:
-            counts = sync_once(client, local_root, delete_remote=args.delete_remote)
+            if desktop_ui_running():
+                counts = sync_once(client, local_root, delete_remote=args.delete_remote)
+            else:
+                counts, inventory_ready, local = desktop_background_cycle(
+                    client, local_root, background_inventory_state
+                )
+                # Do not let legacy sync publish a new path before the
+                # complete manifest has passed its stability check.
+                legacy_counts = sync_once(
+                    client, local_root, delete_remote=args.delete_remote,
+                    defer_local_only=not inventory_ready, local_snapshot=local,
+                )
+                for key, value in legacy_counts.items():
+                    counts[key] = counts.get(key, 0) + value
             changed = sum(counts.values())
             if changed:
                 print(time.strftime("%Y-%m-%d %H:%M:%S"), counts)

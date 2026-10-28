@@ -1,0 +1,216 @@
+.agents
+.codex
+.gitignore
+3515 Leap
+3515 Leap/1. Leap Road executed Land contract_July 24 2023.pdf
+3515 Leap/222002029_10_4.webp
+3515 Leap/222002029_14_4.webp
+3515 Leap/222002029_15_4.webp
+3515 Leap/222002029_16_4.webp
+3515 Leap/222002029_17_4.webp
+3515 Leap/222002029_18_4.webp
+3515 Leap/222002029_19_4.webp
+3515 Leap/222002029_1_4.webp
+3515 Leap/222002029_21_4.webp
+3515 Leap/222002029_22_4.webp
+3515 Leap/222002029_23_4.webp
+3515 Leap/222002029_24_4.webp
+3515 Leap/222002029_25_4.webp
+3515 Leap/222002029_26_4.webp
+3515 Leap/222002029_28_4.webp
+3515 Leap/222002029_29_4.webp
+3515 Leap/222002029_2_4.webp
+3515 Leap/222002029_31_4.webp
+3515 Leap/222002029_33_4.webp
+3515 Leap/222002029_37_4.webp
+3515 Leap/222002029_38_4.webp
+3515 Leap/222002029_39_4.webp
+3515 Leap/222002029_3_4.webp
+3515 Leap/222002029_4.webp
+3515 Leap/222002029_40_4.webp
+3515 Leap/222002029_41_4.webp
+3515 Leap/222002029_42_4.webp
+3515 Leap/222002029_4_4.webp
+3515 Leap/222002029_5_4.webp
+3515 Leap/222002029_6_4.webp
+3515 Leap/222002029_7_4.webp
+3515 Leap/222002029_8_4.webp
+3515 Leap/3515 pHOTOS.pdf
+3515 Leap/Condition_Summary_Foundation_Water_Damage_3515_Leap_Rd.pdf
+3515 Leap/Kyle Benzle farm Data (1).pdf
+3515 Leap/Kyle Benzle farm Data.pdf
+3515 Leap/Map of Farm 4151 in Franklin County, Ohio.pdf
+3515 Leap/README.md
+3515 Leap/Untitled 3.odt
+3515 Leap/land_contract_cancellation.docx
+3515 Leap/land_contract_cancellation.pdf
+3515 Leap/tax_photos.odt
+Backupkey
+Backupkey~
+Bankruptcy
+Bankruptcy/.~lock.2026_pay.csv#
+Bankruptcy/.~lock.Debts.csv#
+Bankruptcy/2024 Individual Tax Return.pdf
+Bankruptcy/2024_pay.csv
+Bankruptcy/2025-Return.pdf
+Bankruptcy/2025_Pay.csv
+Bankruptcy/2026_pay.csv
+Bankruptcy/Assets.csv
+Bankruptcy/Bankruptcy_ReadMe.txt
+Bankruptcy/Business.csv
+Bankruptcy/Chase_Statements
+Bankruptcy/Chase_Statements/20251020-statements-5399-.pdf
+Bankruptcy/Chase_Statements/20251120-statements-5399-.pdf
+Bankruptcy/Chase_Statements/20251217-statements-5399-.pdf
+Bankruptcy/Chase_Statements/20260121-statements-5399-.pdf
+Bankruptcy/Chase_Statements/20260219-statements-5399-.pdf
+Bankruptcy/Chase_Statements/20260318-statements-5399-.pdf
+Bankruptcy/Child_support_PaymentHistoryReport.pdf
+Bankruptcy/Debts.csv
+Bankruptcy/Ex. B - Kyle 2024 Individual Tax Return.pdf
+Bankruptcy/Ex. J - Navy_Federal_Credit_Card_1_MC__Statement_Most_Recent.pdf
+Bankruptcy/Ex. K - Navy_Federal_Credit_Card_2_Vi_Statement_Most_Recent.pdf
+Bankruptcy/Ex. L - Fidelity_Statement.pdf
+Bankruptcy/Ex. M - Robinhood_Account_Kyle_2024_12_31.pdf
+Bankruptcy/Ex. O - Citi_Personal_MC_3419.pdf
+Bankruptcy/Ex. P - Citi_Personal_Visa_6439.pdf
+Bankruptcy/Ex. U - Navy_Federal_Vehicle_Loan_Statement.pdf
+Bankruptcy/Ex. V - IRS_Debt.pdf
+Bankruptcy/Forms
+Bankruptcy/Forms/Creditor_Matrix.txt
+Bankruptcy/Forms/Form_101_Voluntary_Petition.txt
+Bankruptcy/Forms/SOFA_Statement_Financial_Affairs.txt
+Bankruptcy/Forms/Schedule_AB_Assets.txt
+Bankruptcy/Forms/Schedule_C_Exemptions.txt
+Bankruptcy/Forms/Schedule_D_Secured.txt
+Bankruptcy/Forms/Schedule_EF_Unsecured.txt
+Bankruptcy/Forms/Schedule_I_Income.txt
+Bankruptcy/Forms/Schedule_J_Expenses.txt
+Bankruptcy/Forms/Summary_Assets_Liabilities.txt
+Bankruptcy/Kyle_Benzle_crs1_certificate.pdf
+Bankruptcy/License_Back.jpg
+Bankruptcy/License_Front.jpg
+Bankruptcy/New
+Bankruptcy/New/Debts.csv
+Bankruptcy/Social_Security_Card_Back.jpg
+Bankruptcy/Social_Security_Card_Front.jpg
+Citi.pdf
+Demeter
+Demeter/Aerial Images
+Demeter/Aerial Images/DJI_0154.JPG
+Demeter/Aerial Images/DJI_0155.JPG
+Demeter/Aerial Images/DJI_0156.html
+Demeter/Aerial Images/DJI_0157.JPG
+Demeter/Aerial Images/DJI_0158.JPG
+Demeter/Aerial Images/DJI_0159.JPG
+Demeter/Aerial Images/DJI_0160.JPG
+Demeter/Aerial Images/DJI_0161.JPG
+Demeter/Aerial Images/DJI_0162.JPG
+Demeter/Aerial Images/DJI_0163.JPG
+Demeter/Aerial Images/DJI_0164.JPG
+Demeter/Aerial Images/DJI_0165.JPG
+Demeter/Aerial Images/DJI_0166.JPG
+Demeter/Aerial Images/DJI_0167.JPG
+Demeter/Benzle_County Vendor's License Registration Summary.pdf
+Demeter/Benzle_cod-application-Jeff-S.pdf
+Demeter/Benzle_tax-exempt-form-1.pdf
+Demeter/Business_Details copy.pdf
+Demeter/County Vendor's License Registration Letter.pdf
+Demeter/Ex. 8 - Benzle_LLC_Demeter_Farm_Business_Ownership.pdf
+Demeter/Ex. 9 - Benzle_LLC_Demeter_Family_Farm_Asset_List.pdf
+Demeter/Kyle Benzle farm Data (1).pdf
+Demeter/Kyle Benzle farm Data.pdf
+Demeter/Map of Farm 4151 in Franklin County, Ohio.pdf
+Demeter/OhioDeptAgDealerCertificate.pdf
+Demeter/OurSoilSign.png
+Demeter/Parsley.png
+Demeter/QRCodes.pdf
+Demeter/Rabbitlogo.jpg
+Demeter/Rosemary_Gus (3).pdf
+Demeter/Rosemary_Gus (4).pdf
+Demeter/Scanned from a Xerox Multifunction Printer.pdf
+Demeter/Screenshot_20230720_085121.png
+Demeter/Screenshot_20230720_085217.png
+Demeter/Screenshot_20230720_085349.png
+Demeter/Screenshot_20230720_085501.png
+Demeter/Screenshot_20230720_085507.png
+Demeter/Screenshot_20230720_085514.png
+Demeter/Screenshot_20230720_085748.png
+Demeter/Screenshot_20240429_143015.png
+Demeter/Screenshot_20240429_150857.png
+Demeter/Signs
+Demeter/Untitled 1.odt
+Demeter/cod-application-Jeff-S.pdf
+Demeter/contractors
+Demeter/demeterlogo.png
+Demeter/garlic_price.pdf
+Demeter/garlic_price.png
+Demeter/garlic_price_generic.pdf
+Demeter/lavender_price.pdf
+Demeter/lavender_price_generic.pdf
+Demeter/mockup1.jpg
+FreeCloud.desktop
+GitMo
+GitMo/.agents
+GitMo/.codex
+GitMo/GitMo.desktop
+GitMo/README.md
+GitMo/app.py
+GitMo/gitmo
+GitMo/gitmo/__init__.py
+GitMo/gitmo/app.py
+GitMo/gitmo/config.py
+GitMo/gitmo/git_cli.py
+GitMo/gitmo/github_api.py
+GitMo/gitmo/sync_engine.py
+GitMo/gui.png
+GitMo/icon.png
+GitMo/logo.png
+GitMo/logotrans.png
+GitMo/logow.png
+GitMo/repogui.png
+GitMo/run-gitmo.sh
+Idiot_City
+Idiot_City/Abuse_of_Process
+Idiot_City/Abuse_of_Process/Evidence Against CPO and Proof of Grecco Lies
+Idiot_City/Abuse_of_Process/Evidence Against CPO and Proof of Grecco Lies/Text Messages
+Idiot_City/Appeal
+Idiot_City/Appeal/Enily Bully
+Idiot_City/Appeal/Enily Bully/Evidence Against CPO and Proof of Grecco Lies
+Idiot_City/Appeal/Enily Bully/Evidence Against CPO and Proof of Grecco Lies/Text Messages
+Idiot_City/Benzle_Case_Final_Documents FINAL
+Idiot_City/Citi
+Idiot_City/Contempt, 2025
+Idiot_City/Dipshit Drukard
+Idiot_City/Enily Bully
+Idiot_City/Enily Bully/Evidence Against CPO and Proof of Grecco Lies
+Idiot_City/Enily Bully/Evidence Against CPO and Proof of Grecco Lies/Text Messages
+Idiot_City/Hilliard audio.wav
+Idiot_City/Panico
+Idiot_City/Pedo Depo
+Idiot_City/SnottySnyder
+README.md
+Run_Mac_Linux.sh
+Run_Windows.bat
+Seelys
+Seelys/.~lock.Clean_Inventory_List.csv#
+Seelys/Clean_Inventory_List.csv
+There Is No Antimemetics Division - qntm
+dnewsdgrf.txt
+favicon.ico
+freecloud_cli.py
+freecloud_ui.py
+icon.png
+logo.png
+server
+server/favicon.ico
+server/freecloud.php
+server/freecloud_api.php
+server/freecloud_download.php
+server/freecloud_preview.php
+server/index.php
+server/logo.png
+tests
+tests/test_freecloud_cli.py
+testtttt.txt
+x-downloader.com_MzQxB9.mp3

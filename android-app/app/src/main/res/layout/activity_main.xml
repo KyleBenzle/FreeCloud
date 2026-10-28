@@ -329,13 +329,12 @@
                     </LinearLayout>
                 </LinearLayout>
 
-                <LinearLayout
+                <androidx.recyclerview.widget.RecyclerView
                     android:id="@+id/filesRecyclerView"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
+                    android:layout_height="560dp"
                     android:layout_marginTop="12dp"
-                    android:minHeight="560dp"
-                    android:orientation="vertical"
+                    android:nestedScrollingEnabled="true"
                     android:paddingLeft="0dp"
                     android:paddingTop="4dp"
                     android:paddingRight="0dp"

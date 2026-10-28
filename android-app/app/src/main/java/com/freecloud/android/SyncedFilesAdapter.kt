@@ -21,6 +21,7 @@ data class SyncedFileItem(
 
 class SyncedFilesAdapter(
     private val onClick: (SyncedFileItem) -> Unit,
+    private val onLongClick: (View, SyncedFileItem) -> Unit,
 ) : RecyclerView.Adapter<SyncedFilesAdapter.FileViewHolder>() {
     private val items = mutableListOf<SyncedFileItem>()
 
@@ -32,7 +33,7 @@ class SyncedFilesAdapter(
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): FileViewHolder {
         val view = LayoutInflater.from(parent.context).inflate(R.layout.item_synced_file, parent, false)
-        return FileViewHolder(view, onClick)
+        return FileViewHolder(view, onClick, onLongClick)
     }
 
     override fun onBindViewHolder(holder: FileViewHolder, position: Int) {
@@ -44,6 +45,7 @@ class SyncedFilesAdapter(
     class FileViewHolder(
         itemView: View,
         private val onClick: (SyncedFileItem) -> Unit,
+        private val onLongClick: (View, SyncedFileItem) -> Unit,
     ) : RecyclerView.ViewHolder(itemView) {
         private val glyphText: TextView = itemView.findViewById(R.id.fileGlyphText)
         private val nameText: TextView = itemView.findViewById(R.id.fileNameText)
@@ -69,12 +71,22 @@ class SyncedFilesAdapter(
                 ),
             )
             itemView.setOnClickListener { onClick(item) }
+            itemView.setOnLongClickListener {
+                onLongClick(it, item)
+                true
+            }
         }
 
         private fun glyphFor(item: SyncedFileItem): String {
-            if (item.isDirectory) return "DIR"
-            val ext = item.name.substringAfterLast('.', "").uppercase()
-            return ext.take(3).ifBlank { "FILE" }
+            if (item.isDirectory) return "\uD83D\uDCC1"
+            return when (item.name.substringAfterLast('.', "").lowercase()) {
+                "jpg", "jpeg", "png", "gif", "webp", "bmp", "svg" -> "\uD83D\uDDBC"
+                "mp4", "mov", "m4v", "webm", "ogv", "ogg" -> "\uD83C\uDFA5"
+                "mp3", "wav", "m4a", "aac", "flac" -> "\uD83C\uDFB5"
+                "pdf" -> "\uD83D\uDCD5"
+                "zip", "rar", "7z", "tar", "gz" -> "\uD83D\uDCE6"
+                else -> "\uD83D\uDCC4"
+            }
         }
     }
 }

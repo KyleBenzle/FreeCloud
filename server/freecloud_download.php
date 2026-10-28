@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/freecloud_lifecycle.php';
 
 $baseDir = __DIR__;
 $sessionDir = $baseDir . '/freecloud_sessions';
@@ -148,6 +149,11 @@ $config = loadConfig($configFile);
 requireAuth($config);
 
 $requestedPath = isset($_GET['path']) ? (string) $_GET['path'] : '';
+$cleanRequestedPath = normalizeRelativePath($requestedPath);
+if (fc_catalog_path_is_tombstoned($cleanRequestedPath, fc_read_json_map($baseDir . '/freecloud_meta/tombstones.json'))) {
+    http_response_code(410);
+    exit('This path has been globally deleted.');
+}
 $target = resolveTarget($requestedPath, $storageRoot);
 if ($target === null) {
     http_response_code(404);
